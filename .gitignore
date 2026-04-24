@@ -13,3 +13,9 @@ Package.resolved
 
 # macOS
 .DS_Store
+
+# Local planning documents
+PRD.md
+.agents_tasks.md
+design_*.md
+docs/**/*.md
