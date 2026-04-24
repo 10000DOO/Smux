@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-struct RecentWorkspace: Identifiable, Codable, Hashable {
+nonisolated struct RecentWorkspace: Identifiable, Codable, Hashable {
     var id: Workspace.ID
     var rootURL: URL
     var displayName: String

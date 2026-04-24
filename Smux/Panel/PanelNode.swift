@@ -1,23 +1,23 @@
 import Foundation
 
-enum PanelNodeKind: String, Codable, Hashable {
+nonisolated enum PanelNodeKind: String, Codable, Hashable {
     case leaf
     case split
 }
 
-enum SplitDirection: String, Codable, Hashable {
+nonisolated enum SplitDirection: String, Codable, Hashable {
     case horizontal
     case vertical
 }
 
-enum PanelSurfaceDescriptor: Codable, Hashable {
+nonisolated enum PanelSurfaceDescriptor: Codable, Hashable {
     case terminal(sessionID: TerminalSession.ID)
     case editor(documentID: DocumentSession.ID)
     case preview(previewID: PreviewState.ID)
     case empty
 }
 
-struct PanelNode: Identifiable, Codable, Hashable {
+nonisolated struct PanelNode: Identifiable, Codable, Hashable {
     typealias ID = UUID
 
     var id: ID
@@ -26,15 +26,158 @@ struct PanelNode: Identifiable, Codable, Hashable {
     var ratio: Double?
     var children: [PanelNode]
     var surface: PanelSurfaceDescriptor?
+
+    init(
+        id: ID = UUID(),
+        kind: PanelNodeKind,
+        direction: SplitDirection? = nil,
+        ratio: Double? = nil,
+        children: [PanelNode] = [],
+        surface: PanelSurfaceDescriptor? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+
+        switch kind {
+        case .leaf:
+            self.direction = nil
+            self.ratio = nil
+            self.children = []
+            self.surface = surface ?? .empty
+        case .split:
+            self.direction = direction
+            self.ratio = ratio
+            self.children = Array(children.prefix(2))
+            self.surface = nil
+        }
+    }
 }
 
 extension PanelNode {
-    static let placeholder = PanelNode(
-        id: UUID(),
-        kind: .leaf,
-        direction: nil,
-        ratio: nil,
-        children: [],
-        surface: .empty
-    )
+    static let placeholder = leaf(surface: .empty)
+
+    static func leaf(id: ID = UUID(), surface: PanelSurfaceDescriptor = .empty) -> PanelNode {
+        PanelNode(id: id, kind: .leaf, surface: surface)
+    }
+
+    static func split(
+        id: ID = UUID(),
+        direction: SplitDirection,
+        ratio: Double = 0.5,
+        first: PanelNode,
+        second: PanelNode
+    ) -> PanelNode {
+        PanelNode(
+            id: id,
+            kind: .split,
+            direction: direction,
+            ratio: ratio,
+            children: [first, second]
+        )
+    }
+
+    var isLeaf: Bool {
+        kind == .leaf
+    }
+
+    var isSplit: Bool {
+        kind == .split
+    }
+
+    var normalizedRatio: Double {
+        min(max(ratio ?? 0.5, 0.1), 0.9)
+    }
+
+    var firstLeafID: ID? {
+        if isLeaf {
+            return id
+        }
+
+        return children.lazy.compactMap(\.firstLeafID).first
+    }
+
+    func contains(panelID: ID) -> Bool {
+        if id == panelID {
+            return true
+        }
+
+        return children.contains { $0.contains(panelID: panelID) }
+    }
+
+    func containsLeaf(panelID: ID) -> Bool {
+        if id == panelID {
+            return isLeaf
+        }
+
+        return children.contains { $0.containsLeaf(panelID: panelID) }
+    }
+
+    func replacingSurface(panelID: ID, with surface: PanelSurfaceDescriptor) -> PanelNode {
+        guard id != panelID || isLeaf else {
+            return self
+        }
+
+        guard id != panelID else {
+            return .leaf(id: id, surface: surface)
+        }
+
+        guard isSplit else {
+            return self
+        }
+
+        return PanelNode(
+            id: id,
+            kind: .split,
+            direction: direction,
+            ratio: ratio,
+            children: children.map { $0.replacingSurface(panelID: panelID, with: surface) }
+        )
+    }
+
+    func splittingLeaf(
+        panelID: ID,
+        direction: SplitDirection,
+        newSurface: PanelSurfaceDescriptor
+    ) -> (node: PanelNode, newPanelID: ID)? {
+        if id == panelID, isLeaf {
+            let newPanelID = ID()
+            let splitNode = PanelNode.split(
+                direction: direction,
+                first: self,
+                second: .leaf(id: newPanelID, surface: newSurface)
+            )
+
+            return (splitNode, newPanelID)
+        }
+
+        guard isSplit else {
+            return nil
+        }
+
+        for childIndex in children.indices {
+            guard let result = children[childIndex].splittingLeaf(
+                panelID: panelID,
+                direction: direction,
+                newSurface: newSurface
+            ) else {
+                continue
+            }
+
+            var updatedChildren = children
+            updatedChildren[childIndex] = result.node
+
+            return (
+                PanelNode(
+                    id: id,
+                    kind: .split,
+                    direction: self.direction,
+                    ratio: ratio,
+                    children: updatedChildren
+                ),
+                result.newPanelID
+            )
+        }
+
+        return nil
+    }
 }

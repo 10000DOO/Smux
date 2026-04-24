@@ -1,12 +1,12 @@
 import Foundation
 
-enum DocumentLanguage: String, Codable, Hashable {
+nonisolated enum DocumentLanguage: String, Codable, Hashable {
     case markdown
     case mermaid
     case plainText
 }
 
-enum DocumentSaveState: String, Codable, Hashable {
+nonisolated enum DocumentSaveState: String, Codable, Hashable {
     case clean
     case dirty
     case saving
@@ -14,19 +14,19 @@ enum DocumentSaveState: String, Codable, Hashable {
     case conflicted
 }
 
-struct FileFingerprint: Codable, Hashable {
+nonisolated struct FileFingerprint: Codable, Hashable {
     var modificationDate: Date?
     var size: Int64?
     var contentHash: String?
 }
 
-struct DocumentConflict: Codable, Hashable {
+nonisolated struct DocumentConflict: Codable, Hashable {
     var detectedAt: Date
     var loadedFingerprint: FileFingerprint?
     var currentFingerprint: FileFingerprint?
 }
 
-struct DocumentSession: Identifiable, Codable, Hashable {
+nonisolated struct DocumentSession: Identifiable, Codable, Hashable {
     typealias ID = UUID
 
     var id: ID

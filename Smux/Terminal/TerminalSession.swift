@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalSessionStatus: String, Codable, Hashable {
+nonisolated enum TerminalSessionStatus: String, Codable, Hashable {
     case idle
     case starting
     case running
@@ -9,7 +9,7 @@ enum TerminalSessionStatus: String, Codable, Hashable {
     case restorable
 }
 
-struct TerminalSession: Identifiable, Codable, Hashable {
+nonisolated struct TerminalSession: Identifiable, Codable, Hashable {
     typealias ID = UUID
 
     var id: ID

@@ -1,13 +1,13 @@
 import Foundation
 
-enum NotificationLevel: String, Codable, Hashable {
+nonisolated enum NotificationLevel: String, Codable, Hashable {
     case info
     case warning
     case error
     case critical
 }
 
-enum AgentNotificationKind: String, Codable, Hashable {
+nonisolated enum AgentNotificationKind: String, Codable, Hashable {
     case waitingForInput
     case permissionRequested
     case completed
@@ -15,7 +15,7 @@ enum AgentNotificationKind: String, Codable, Hashable {
     case terminated
 }
 
-struct AgentNotification: Identifiable, Codable, Hashable {
+nonisolated struct AgentNotification: Identifiable, Codable, Hashable {
     typealias ID = UUID
 
     var id: ID

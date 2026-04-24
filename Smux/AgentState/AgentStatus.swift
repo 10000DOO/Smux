@@ -1,12 +1,12 @@
 import Foundation
 
-enum AgentKind: String, Codable, Hashable {
+nonisolated enum AgentKind: String, Codable, Hashable {
     case codex
     case claude
     case unknown
 }
 
-enum AgentExecutionState: String, Codable, Hashable {
+nonisolated enum AgentExecutionState: String, Codable, Hashable {
     case idle
     case running
     case waitingForInput
@@ -17,14 +17,14 @@ enum AgentExecutionState: String, Codable, Hashable {
     case unknown
 }
 
-enum AgentStatusSource: String, Codable, Hashable {
+nonisolated enum AgentStatusSource: String, Codable, Hashable {
     case terminalOutput
     case hookPayload
     case command
     case unknown
 }
 
-struct AgentStatus: Identifiable, Codable, Hashable {
+nonisolated struct AgentStatus: Identifiable, Codable, Hashable {
     var id: UUID
     var agentKind: AgentKind
     var state: AgentExecutionState

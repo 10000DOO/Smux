@@ -1,11 +1,11 @@
 import Foundation
 
-enum FileTreeNodeKind: String, Codable, Hashable {
+nonisolated enum FileTreeNodeKind: String, Codable, Hashable {
     case file
     case directory
 }
 
-enum GitFileStatus: String, Codable, Hashable {
+nonisolated enum GitFileStatus: String, Codable, Hashable {
     case unmodified
     case modified
     case added
@@ -15,14 +15,14 @@ enum GitFileStatus: String, Codable, Hashable {
     case unknown
 }
 
-indirect enum FileTreeChildrenState: Codable, Hashable {
+nonisolated indirect enum FileTreeChildrenState: Codable, Hashable {
     case notLoaded
     case loading
     case loaded([FileTreeNode])
     case failed(message: String)
 }
 
-struct FileTreeNode: Identifiable, Codable, Hashable {
+nonisolated struct FileTreeNode: Identifiable, Codable, Hashable {
     typealias ID = UUID
 
     var id: ID

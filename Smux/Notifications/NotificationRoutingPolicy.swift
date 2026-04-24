@@ -1,6 +1,6 @@
 import Foundation
 
-struct NotificationRoutingPolicy: Codable, Hashable {
+nonisolated struct NotificationRoutingPolicy: Codable, Hashable {
     var showsAcknowledged: Bool
     var minimumLevel: NotificationLevel
 
