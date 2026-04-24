@@ -8,14 +8,16 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var workspaceStore = WorkspaceStore()
+    @StateObject private var panelStore = PanelStore()
+    @StateObject private var notificationStore = NotificationStore()
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
-        }
-        .padding()
+        WorkspaceShellView(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            notificationStore: notificationStore
+        )
     }
 }
 
