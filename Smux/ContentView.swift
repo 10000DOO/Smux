@@ -6,6 +6,7 @@
 //
 
 import Combine
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -48,11 +49,13 @@ private final class AppComposition: ObservableObject {
     let workspaceRepository: any WorkspaceRepository
     let workspaceCoordinator: WorkspaceCoordinator
     let commandRouter: AppCommandRouter
+    private let logger = Logger(subsystem: "Smux", category: "AppComposition")
 
     init() {
         let workspaceStore = WorkspaceStore()
         let panelStore = PanelStore()
-        let notificationStore = NotificationStore()
+        let systemNotificationDeliverer = UserNotificationCenterNotifier()
+        let notificationStore = NotificationStore(systemNotifier: systemNotificationDeliverer)
         let recentWorkspaceStore = RecentWorkspaceStore()
         let workspaceRepository = FileBackedWorkspaceRepository()
         let workspaceCoordinator = WorkspaceCoordinator(
@@ -74,6 +77,16 @@ private final class AppComposition: ObservableObject {
             terminalCommanding: workspaceCoordinator,
             panelCommanding: workspaceCoordinator
         )
+        systemNotificationDeliverer.prepare { [logger] result in
+            switch result {
+            case .success(true):
+                break
+            case .success(false):
+                logger.notice("System notification authorization was not granted.")
+            case let .failure(error):
+                logger.error("Failed to prepare system notifications: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func openWorkspace(from result: Result<[URL], any Error>) async {
