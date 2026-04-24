@@ -29,8 +29,24 @@ final class PanelStore: ObservableObject, PanelCommanding {
             return
         }
 
+        splitPanel(panelID: targetPanelID, direction: direction, surface: surface)
+    }
+
+    func replaceFocusedPanel(with surface: PanelSurfaceDescriptor) {
+        guard let targetPanelID = focusedPanelID ?? rootNode.firstLeafID else {
+            return
+        }
+
+        replacePanel(panelID: targetPanelID, with: surface)
+    }
+
+    func splitPanel(
+        panelID: PanelNode.ID,
+        direction: SplitDirection,
+        surface: PanelSurfaceDescriptor
+    ) {
         guard let result = rootNode.splittingLeaf(
-            panelID: targetPanelID,
+            panelID: panelID,
             direction: direction,
             newSurface: surface
         ) else {
@@ -41,17 +57,13 @@ final class PanelStore: ObservableObject, PanelCommanding {
         focusedPanelID = result.newPanelID
     }
 
-    func replaceFocusedPanel(with surface: PanelSurfaceDescriptor) {
-        guard let targetPanelID = focusedPanelID ?? rootNode.firstLeafID else {
+    func replacePanel(panelID: PanelNode.ID, with surface: PanelSurfaceDescriptor) {
+        guard rootNode.containsLeaf(panelID: panelID) else {
             return
         }
 
-        guard rootNode.containsLeaf(panelID: targetPanelID) else {
-            return
-        }
-
-        rootNode = rootNode.replacingSurface(panelID: targetPanelID, with: surface)
-        focusedPanelID = targetPanelID
+        rootNode = rootNode.replacingSurface(panelID: panelID, with: surface)
+        focusedPanelID = panelID
     }
 
     func reset(to rootNode: PanelNode = .placeholder) {

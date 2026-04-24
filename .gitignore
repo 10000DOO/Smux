@@ -19,3 +19,6 @@ PRD.md
 .agents_tasks.md
 design_*.md
 docs/**/*.md
+
+# Local agent metadata
+.serena/
