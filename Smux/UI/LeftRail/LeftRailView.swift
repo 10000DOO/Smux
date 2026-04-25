@@ -5,6 +5,10 @@ struct LeftRailView: View {
     var rootNode: PanelNode
     var focusedPanelID: PanelNode.ID?
     var notifications: [WorkspaceNotification]
+    var fileTreeRoot: FileTreeNode? = nil
+    var selectedFileTreeNodeID: FileTreeNode.ID? = nil
+    var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
+    var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -16,7 +20,7 @@ struct LeftRailView: View {
 
             Divider()
 
-            fileTreePlaceholder
+            fileTreeSection
 
             Spacer()
 
@@ -76,10 +80,26 @@ private extension LeftRailView {
         }
     }
 
-    var fileTreePlaceholder: some View {
+    var fileTreeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Files", systemImage: "folder")
                 .font(.subheadline)
+
+            if let fileTreeRoot {
+                LeftRailFileTreeView(
+                    rootNode: fileTreeRoot,
+                    selectedNodeID: selectedFileTreeNodeID,
+                    onExpand: onExpandFileTreeNode,
+                    onSelect: onSelectFileTreeNode
+                )
+            } else {
+                fileTreePlaceholder
+            }
+        }
+    }
+
+    var fileTreePlaceholder: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Label(workspace?.rootURL.lastPathComponent ?? "Workspace", systemImage: "folder")
                 .font(.caption)
                 .foregroundStyle(.secondary)

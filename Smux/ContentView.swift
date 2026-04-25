@@ -18,7 +18,8 @@ struct ContentView: View {
         WorkspaceShellView(
             workspaceStore: appComposition.workspaceStore,
             panelStore: appComposition.panelStore,
-            notificationStore: appComposition.notificationStore
+            notificationStore: appComposition.notificationStore,
+            fileTreeStore: appComposition.fileTreeStore
         )
         .toolbar {
             Button {
@@ -45,6 +46,7 @@ private final class AppComposition: ObservableObject {
     let workspaceStore: WorkspaceStore
     let panelStore: PanelStore
     let notificationStore: NotificationStore
+    let fileTreeStore: FileTreeStore
     let recentWorkspaceStore: RecentWorkspaceStore
     let workspaceRepository: any WorkspaceRepository
     let workspaceCoordinator: WorkspaceCoordinator
@@ -54,6 +56,7 @@ private final class AppComposition: ObservableObject {
     init() {
         let workspaceStore = WorkspaceStore()
         let panelStore = PanelStore()
+        let fileTreeStore = FileTreeStore()
         let systemNotificationDeliverer = UserNotificationCenterNotifier()
         let notificationStore = NotificationStore(systemNotifier: systemNotificationDeliverer)
         let recentWorkspaceStore = RecentWorkspaceStore()
@@ -68,6 +71,7 @@ private final class AppComposition: ObservableObject {
         self.workspaceStore = workspaceStore
         self.panelStore = panelStore
         self.notificationStore = notificationStore
+        self.fileTreeStore = fileTreeStore
         self.recentWorkspaceStore = recentWorkspaceStore
         self.workspaceRepository = workspaceRepository
         self.workspaceCoordinator = workspaceCoordinator

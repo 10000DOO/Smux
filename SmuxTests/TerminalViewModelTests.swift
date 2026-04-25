@@ -1,8 +1,123 @@
+import AppKit
 import XCTest
 @testable import Smux
 
 @MainActor
 final class TerminalViewModelTests: XCTestCase {
+    func testAppendOutputPublishesVisibleOutput() {
+        let viewModel = TerminalViewModel()
+
+        viewModel.appendOutput("hello")
+        viewModel.appendOutput(Data(" world".utf8))
+
+        XCTAssertEqual(viewModel.visibleOutput, "hello world")
+    }
+
+    func testAppendOutputPreservesSplitUTF8ScalarsAcrossChunks() {
+        let viewModel = TerminalViewModel()
+        let bytes = Array("한".utf8)
+
+        viewModel.appendOutput(Data(bytes.prefix(2)))
+        XCTAssertEqual(viewModel.visibleOutput, "")
+
+        viewModel.appendOutput(Data(bytes.suffix(1)))
+        XCTAssertEqual(viewModel.visibleOutput, "한")
+    }
+
+    func testAppendOutputTruncatesToConfiguredBufferLimit() {
+        let viewModel = TerminalViewModel(
+            outputBuffer: TerminalOutputBuffer(maximumCharacterCount: 5)
+        )
+
+        viewModel.appendOutput("abcdef")
+        viewModel.appendOutput("ghi")
+
+        XCTAssertEqual(viewModel.visibleOutput, "efghi")
+    }
+
+    func testClearOutputRemovesVisibleOutput() {
+        let viewModel = TerminalViewModel()
+
+        viewModel.appendOutput("hello")
+        viewModel.clearOutput()
+
+        XCTAssertEqual(viewModel.visibleOutput, "")
+    }
+
+    func testTerminalTextViewDelegatesKeyInput() throws {
+        let textView = TerminalTextView()
+        var inputs: [String] = []
+        textView.inputHandler = { inputs.append($0) }
+
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "a",
+                charactersIgnoringModifiers: "a",
+                isARepeat: false,
+                keyCode: 0
+            )
+        )
+
+        textView.keyDown(with: event)
+
+        XCTAssertEqual(inputs, ["a"])
+    }
+
+    func testTerminalTextViewMapsArrowKeysToEscapeSequences() throws {
+        let textView = TerminalTextView()
+        var inputs: [String] = []
+        textView.inputHandler = { inputs.append($0) }
+        let upArrow = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: upArrow,
+                charactersIgnoringModifiers: upArrow,
+                isARepeat: false,
+                keyCode: 126
+            )
+        )
+
+        textView.keyDown(with: event)
+
+        XCTAssertEqual(inputs, ["\u{1B}[A"])
+    }
+
+    func testTerminalTextViewDoesNotForwardCommandShortcutsAsInput() throws {
+        let textView = TerminalTextView()
+        var inputs: [String] = []
+        textView.inputHandler = { inputs.append($0) }
+        let event = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: .command,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: "c",
+                charactersIgnoringModifiers: "c",
+                isARepeat: false,
+                keyCode: 8
+            )
+        )
+
+        textView.keyDown(with: event)
+
+        XCTAssertTrue(inputs.isEmpty)
+    }
+
     func testSendInputAndResizeDelegateToTerminalCoreAndRefreshMetadata() {
         let sessionID = TerminalSession.ID()
         let initialSession = makeSession(

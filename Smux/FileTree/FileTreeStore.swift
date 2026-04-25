@@ -14,7 +14,10 @@ final class FileTreeStore: ObservableObject {
     }
 
     func loadRoot(rootURL: URL) async throws {
-        root = try await loader.loadRoot(at: rootURL)
+        let loadedRoot = try await loader.loadRoot(at: rootURL)
+        try Task.checkCancellation()
+        root = loadedRoot
+        selectedNodeID = nil
     }
 
     func loadRoot(workspace: Workspace) async throws {
@@ -51,6 +54,12 @@ final class FileTreeStore: ObservableObject {
                 throw error
             }
         }
+    }
+
+    func clear() {
+        root = nil
+        selectedNodeID = nil
+        filterText = ""
     }
 }
 

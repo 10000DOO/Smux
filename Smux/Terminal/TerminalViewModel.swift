@@ -10,15 +10,20 @@ final class TerminalViewModel: ObservableObject {
     }
     @Published var status: TerminalSessionStatus = .idle
     @Published var title = "Terminal"
+    @Published private(set) var visibleOutput: String
 
     private let terminalCore: (any TerminalCoreControlling)?
+    private var outputBuffer: TerminalOutputBuffer
 
     init(
         session: TerminalSession? = nil,
-        terminalCore: (any TerminalCoreControlling)? = nil
+        terminalCore: (any TerminalCoreControlling)? = nil,
+        outputBuffer: TerminalOutputBuffer = TerminalOutputBuffer()
     ) {
         self.session = session
         self.terminalCore = terminalCore
+        self.outputBuffer = outputBuffer
+        self.visibleOutput = outputBuffer.text
         updateMetadata()
     }
 
@@ -38,6 +43,21 @@ final class TerminalViewModel: ObservableObject {
 
         terminalCore?.resize(sessionID: sessionID, columns: columns, rows: rows)
         refreshSession()
+    }
+
+    func appendOutput(_ text: String) {
+        outputBuffer.append(text)
+        visibleOutput = outputBuffer.text
+    }
+
+    func appendOutput(_ data: Data) {
+        outputBuffer.append(data)
+        visibleOutput = outputBuffer.text
+    }
+
+    func clearOutput() {
+        outputBuffer.clear()
+        visibleOutput = outputBuffer.text
     }
 
     private func refreshSession() {
