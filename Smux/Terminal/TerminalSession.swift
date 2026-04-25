@@ -23,4 +23,6 @@ nonisolated struct TerminalSession: Identifiable, Codable, Hashable {
     var createdAt: Date
     var lastActivityAt: Date
     var lastOutputSummary: String?
+    var exitCode: Int32?
+    var failureMessage: String?
 }
