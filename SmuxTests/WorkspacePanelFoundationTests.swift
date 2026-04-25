@@ -427,14 +427,33 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let firstPanelID = PanelNode.ID()
         let secondPanelID = PanelNode.ID()
+        let previewID = PreviewState.ID()
+        let documentID = DocumentSession.ID()
+        let restoredDocument = DocumentSession.make(
+            id: documentID,
+            workspaceID: restoredWorkspace.id,
+            url: restoredRootURL.appendingPathComponent("README.md")
+        )
+        let restoredPreview = PreviewState(
+            id: previewID,
+            sourceDocumentID: documentID,
+            renderVersion: 3,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1>Restored</h1>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: 1,
+            scrollAnchor: nil
+        )
         let restoredPanelTree = PanelNode.split(
             direction: .horizontal,
             first: .leaf(id: firstPanelID, surface: .empty),
-            second: .leaf(id: secondPanelID, surface: .preview(previewID: PreviewState.ID()))
+            second: .leaf(id: secondPanelID, surface: .preview(previewID: previewID))
         )
         let restoredSnapshot = WorkspaceSnapshot(
             workspace: restoredWorkspace,
             panelTree: restoredPanelTree,
+            documents: [restoredDocument],
+            previews: [restoredPreview],
             leftRailState: LeftRailState(
                 selectedWorkspaceID: restoredWorkspace.id,
                 selectedPanelID: secondPanelID,
@@ -444,12 +463,16 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let repository = InMemoryWorkspaceRepository()
         let workspaceStore = WorkspaceStore(activeWorkspace: activeWorkspace)
         let panelStore = PanelStore(rootNode: activePanelTree)
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
         let recentStore = RecentWorkspaceStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             workspaceRepository: repository,
-            recentWorkspaceStore: recentStore
+            recentWorkspaceStore: recentStore,
+            documentSessionStore: documentSessionStore,
+            previewSessionStore: previewSessionStore
         )
         await repository.setSnapshot(restoredSnapshot, for: restoredRootURL)
 
@@ -461,6 +484,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(workspaceStore.activeWorkspace?.id, restoredWorkspace.id)
         XCTAssertEqual(panelStore.rootNode, restoredPanelTree)
         XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
+        XCTAssertEqual(documentSessionStore.session(for: documentID), restoredDocument)
+        XCTAssertEqual(previewSessionStore.state(for: previewID), restoredPreview)
+        XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
         XCTAssertEqual(recentStore.recentWorkspaces.map(\.id), [restoredWorkspace.id])
         XCTAssertFalse(workspaceStore.isOpeningWorkspace)
         XCTAssertNil(workspaceStore.openErrorMessage)
@@ -525,6 +551,74 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorOpenDocumentCreatesSessionAndBindsSplitPreviewToSameDocument() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/DocumentWorkspace")
+        )
+        let documentURL = workspace.rootURL.appendingPathComponent("README.md")
+        let workspaceStore = WorkspaceStore(activeWorkspace: workspace)
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            documentSessionStore: documentSessionStore,
+            previewSessionStore: previewSessionStore
+        )
+
+        try await coordinator.openDocument(documentURL, preferredSurface: .split)
+
+        guard case let .editor(documentID) = panelStore.rootNode.children.first?.surface,
+              case let .preview(previewID) = panelStore.rootNode.children.last?.surface
+        else {
+            XCTFail("Expected split editor and preview surfaces.")
+            return
+        }
+
+        let session = documentSessionStore.session(for: documentID)
+        XCTAssertEqual(session?.workspaceID, workspace.id)
+        XCTAssertEqual(session?.url, documentURL)
+        XCTAssertEqual(session?.language, .markdown)
+        XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCreateTerminalStartsControllerSessionAndUsesReturnedID() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/TerminalWorkspace")
+        )
+        let workspaceStore = WorkspaceStore(activeWorkspace: workspace)
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let client = WorkspacePanelMockPTYClient(processID: 2468)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController
+        )
+
+        try await coordinator.createTerminal(in: workspace.id)
+
+        guard case let .terminal(sessionID) = panelStore.rootNode.surface else {
+            XCTFail("Expected terminal surface.")
+            return
+        }
+
+        let session = terminalSessionController.session(for: sessionID)
+        XCTAssertEqual(session?.workspaceID, workspace.id)
+        XCTAssertEqual(session?.workingDirectory, workspace.rootURL)
+        XCTAssertEqual(session?.processID, 2468)
+        XCTAssertEqual(session?.status, .running)
+        XCTAssertEqual(client.startRequests.count, 1)
+        XCTAssertEqual(client.startRequests.first?.workingDirectory, workspace.rootURL)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorCloseSavesSnapshotAndRemovesWorkspace() async {
         let activeWorkspace = Workspace.make(
             id: UUID(),
@@ -546,13 +640,37 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaces: [activeWorkspace, remainingWorkspace]
         )
         let panelStore = PanelStore(rootNode: panelTree)
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: WorkspacePanelMockPTYClient(processID: 1111))
+        )
+        let documentSession = DocumentSession.make(
+            workspaceID: activeWorkspace.id,
+            url: activeWorkspace.rootURL.appendingPathComponent("Draft.md")
+        )
+        let previewState = PreviewState(
+            id: PreviewState.ID(),
+            sourceDocumentID: documentSession.id,
+            renderVersion: 2,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<p>Draft</p>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: 1,
+            scrollAnchor: nil
+        )
         let recentStore = RecentWorkspaceStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             workspaceRepository: repository,
-            recentWorkspaceStore: recentStore
+            recentWorkspaceStore: recentStore,
+            documentSessionStore: documentSessionStore,
+            terminalSessionController: terminalSessionController,
+            previewSessionStore: previewSessionStore
         )
+        documentSessionStore.upsertSession(documentSession)
+        previewSessionStore.upsertState(previewState, for: previewState.id)
         recentStore.noteOpened(activeWorkspace)
 
         await coordinator.closeWorkspace(id: activeWorkspace.id)
@@ -560,6 +678,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let savedSnapshot = await repository.savedSnapshot(for: activeWorkspace.rootURL)
         XCTAssertEqual(savedSnapshot?.workspaceID, activeWorkspace.id)
         XCTAssertEqual(savedSnapshot?.panelTree, panelTree)
+        XCTAssertEqual(savedSnapshot?.documents, [documentSession])
+        XCTAssertEqual(savedSnapshot?.previews, [previewState])
         XCTAssertEqual(workspaceStore.workspaces.map(\.id), [remainingWorkspace.id])
         XCTAssertEqual(workspaceStore.activeWorkspace?.id, remainingWorkspace.id)
         XCTAssertEqual(recentStore.recentWorkspaces.map(\.id), [activeWorkspace.id])
@@ -778,5 +898,41 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             splitDirection = direction
             splitSurface = surface
         }
+    }
+}
+
+private final class WorkspacePanelMockPTYClient: PTYClient {
+    var outputHandler: (@Sendable (Data) -> Void)?
+    var terminationHandler: (@Sendable (Int32) -> Void)?
+    private(set) var processID: Int32?
+    private(set) var startRequests: [PTYLaunchRequest] = []
+    private let launchProcessID: Int32
+
+    init(processID: Int32) {
+        self.launchProcessID = processID
+    }
+
+    func start(_ request: PTYLaunchRequest) throws -> PTYLaunchResult {
+        startRequests.append(request)
+        processID = launchProcessID
+        return PTYLaunchResult(processID: launchProcessID)
+    }
+
+    func write(_ data: Data) throws {}
+
+    func resize(columns: Int, rows: Int) throws {}
+
+    func terminate() {}
+}
+
+private final class WorkspacePanelMockPTYClientFactory: PTYClientFactory, @unchecked Sendable {
+    private let client: WorkspacePanelMockPTYClient
+
+    init(client: WorkspacePanelMockPTYClient) {
+        self.client = client
+    }
+
+    func makeClient() -> any PTYClient {
+        client
     }
 }

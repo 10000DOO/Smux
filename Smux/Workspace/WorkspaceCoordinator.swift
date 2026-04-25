@@ -6,17 +6,26 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var panelStore: PanelStore?
     var workspaceRepository: (any WorkspaceRepository)?
     var recentWorkspaceStore: RecentWorkspaceStore?
+    var documentSessionStore: DocumentSessionStore?
+    var terminalSessionController: TerminalSessionController?
+    var previewSessionStore: PreviewSessionStore?
 
     init(
         workspaceStore: WorkspaceStore? = nil,
         panelStore: PanelStore? = nil,
         workspaceRepository: (any WorkspaceRepository)? = nil,
-        recentWorkspaceStore: RecentWorkspaceStore? = nil
+        recentWorkspaceStore: RecentWorkspaceStore? = nil,
+        documentSessionStore: DocumentSessionStore? = nil,
+        terminalSessionController: TerminalSessionController? = nil,
+        previewSessionStore: PreviewSessionStore? = nil
     ) {
         self.workspaceStore = workspaceStore
         self.panelStore = panelStore
         self.workspaceRepository = workspaceRepository
         self.recentWorkspaceStore = recentWorkspaceStore
+        self.documentSessionStore = documentSessionStore
+        self.terminalSessionController = terminalSessionController
+        self.previewSessionStore = previewSessionStore
     }
 
     func openWorkspace(rootURL: URL) async throws {
@@ -65,6 +74,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         )
 
         workspaceStore.setActiveWorkspace(workspace)
+        restoreSnapshotState(snapshot)
 
         if let panelStore {
             let panelTree = snapshot?.panelTree ?? .placeholder
@@ -98,32 +108,47 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
-        guard workspaceStore?.activeWorkspace != nil else {
+        guard let workspace = workspaceStore?.activeWorkspace else {
             throw WorkspaceCoordinatorError.missingActiveWorkspace
         }
 
         let documentID = DocumentSession.ID()
+        let session = DocumentSession.make(
+            id: documentID,
+            workspaceID: workspace.id,
+            url: url
+        )
+        documentSessionStore?.upsertSession(session)
 
         switch preferredSurface {
         case .editor:
             panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
         case .preview:
-            panelStore?.replaceFocusedPanel(with: .preview(previewID: PreviewState.ID()))
+            let previewID = PreviewState.ID()
+            previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
+            panelStore?.replaceFocusedPanel(with: .preview(previewID: previewID))
         case .split:
+            let previewID = PreviewState.ID()
+            previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
             panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
-                surface: .preview(previewID: PreviewState.ID())
+                surface: .preview(previewID: previewID)
             )
         }
     }
 
     func createTerminal(in workspaceID: Workspace.ID) async throws {
-        guard workspaceStore?.workspaces.contains(where: { $0.id == workspaceID }) == true else {
+        guard let workspace = workspaceStore?.workspaces.first(where: { $0.id == workspaceID }) else {
             throw WorkspaceCoordinatorError.workspaceNotFound
         }
 
-        panelStore?.replaceFocusedPanel(with: .terminal(sessionID: TerminalSession.ID()))
+        guard let session = try await terminalSessionController?.createSession(in: workspace, command: []) else {
+            panelStore?.replaceFocusedPanel(with: .terminal(sessionID: TerminalSession.ID()))
+            return
+        }
+
+        panelStore?.replaceFocusedPanel(with: .terminal(sessionID: session.id))
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
@@ -131,8 +156,20 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     private func saveSnapshot(for workspace: Workspace) async throws {
-        let snapshot = WorkspaceSnapshot(workspace: workspace, panelTree: panelStore?.rootNode)
+        let snapshot = WorkspaceSnapshot(
+            workspace: workspace,
+            panelTree: panelStore?.rootNode,
+            sessions: terminalSessionController?.snapshotSessions() ?? [],
+            documents: documentSessionStore?.snapshotSessions() ?? [],
+            previews: previewSessionStore?.snapshotStates() ?? []
+        )
         try await workspaceRepository?.saveSnapshot(snapshot, for: workspace.rootURL)
+    }
+
+    private func restoreSnapshotState(_ snapshot: WorkspaceSnapshot?) {
+        documentSessionStore?.replaceSessions(snapshot?.documents ?? [])
+        previewSessionStore?.replaceStates(snapshot?.previews ?? [])
+        terminalSessionController?.replaceSnapshotSessions(snapshot?.sessions ?? [])
     }
 }
 

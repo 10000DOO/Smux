@@ -31,7 +31,7 @@ nonisolated final class MarkdownPreviewPipeline {
             sourceDocumentID: documentID,
             renderVersion: version,
             sanitizedMarkdown: stale ? nil : renderResult.sanitizedMarkdown,
-            mermaidBlocks: [],
+            mermaidBlocks: stale ? [] : renderResult.mermaidBlocks,
             errors: errors,
             zoom: 1,
             scrollAnchor: nil

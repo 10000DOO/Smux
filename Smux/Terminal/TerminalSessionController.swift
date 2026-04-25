@@ -148,6 +148,20 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         sessions[sessionID] = session
     }
 
+    func replaceSnapshotSessions(_ restoredSessions: [TerminalSession]) {
+        ptyClients.values.forEach { $0.terminate() }
+        ptyClients.removeAll()
+        sessions = Dictionary(
+            uniqueKeysWithValues: restoredSessions.map { restoredSession in
+                (restoredSession.id, Self.restoredSession(from: restoredSession))
+            }
+        )
+    }
+
+    func snapshotSessions() -> [TerminalSession] {
+        Array(sessions.values)
+    }
+
     private func makeLaunchRequest(
         command: [String],
         workingDirectory: URL
@@ -257,6 +271,18 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         }
 
         failSession(sessionID, reason: reason)
+    }
+
+    private static func restoredSession(from session: TerminalSession) -> TerminalSession {
+        guard session.status == .starting || session.status == .running else {
+            return session
+        }
+
+        var restoredSession = session
+        restoredSession.status = .terminated
+        restoredSession.processID = nil
+        restoredSession.failureMessage = "Terminal process is not restored with workspace snapshots."
+        return restoredSession
     }
 }
 

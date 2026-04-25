@@ -32,7 +32,7 @@ nonisolated struct FileWatchEvent: Equatable, Codable, Sendable {
     }
 }
 
-nonisolated protocol FileWatching: AnyObject {
+nonisolated protocol FileWatching: AnyObject, Sendable {
     var eventHandler: (@Sendable ([FileWatchEvent]) -> Void)? { get set }
 
     func startWatching(_ scope: FileWatchScope) throws

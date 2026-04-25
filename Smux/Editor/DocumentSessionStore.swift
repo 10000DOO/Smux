@@ -22,4 +22,12 @@ final class DocumentSessionStore: ObservableObject, DocumentSessionStoring {
     func upsertSession(_ session: DocumentSession) {
         sessions[session.id] = session
     }
+
+    func replaceSessions(_ restoredSessions: [DocumentSession]) {
+        sessions = Dictionary(uniqueKeysWithValues: restoredSessions.map { ($0.id, $0) })
+    }
+
+    func snapshotSessions() -> [DocumentSession] {
+        Array(sessions.values)
+    }
 }

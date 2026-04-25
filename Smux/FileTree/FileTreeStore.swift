@@ -8,16 +8,71 @@ final class FileTreeStore: ObservableObject {
     @Published var filterText = ""
 
     private let loader: FileTreeLoading
+    private let watcher: FileWatching
+    private let watchDebouncer: FileWatchDebouncer
+    private var currentRootURL: URL?
+    private var requestedRootURL: URL?
+    private var rootLoadGeneration = 0
+    private var reloadTask: Task<Void, Never>?
 
-    init(loader: FileTreeLoading = FileManagerFileTreeLoader()) {
+    init(
+        loader: FileTreeLoading = FileManagerFileTreeLoader(),
+        watcher: FileWatching = LocalFileWatcher(),
+        fileWatchDebounceInterval: TimeInterval = 0.25
+    ) {
         self.loader = loader
+        self.watcher = watcher
+        self.watchDebouncer = FileWatchDebouncer(interval: fileWatchDebounceInterval)
+
+        watcher.eventHandler = { [weak watchDebouncer] events in
+            events
+                .filter { event in
+                    if case .workspaceRoot = event.scope {
+                        return true
+                    }
+                    return false
+                }
+                .forEach { watchDebouncer?.submit($0) }
+        }
+
+        watchDebouncer.eventHandler = { [weak self] events in
+            Task { @MainActor [weak self] in
+                self?.handleDebouncedWatchEvents(events)
+            }
+        }
+    }
+
+    deinit {
+        reloadTask?.cancel()
+        watchDebouncer.cancel()
+        watcher.eventHandler = nil
+        watcher.stopAll()
     }
 
     func loadRoot(rootURL: URL) async throws {
+        try await loadRoot(rootURL: rootURL, resetSelection: true)
+    }
+
+    private func loadRoot(rootURL: URL, resetSelection: Bool) async throws {
+        rootLoadGeneration += 1
+        let loadGeneration = rootLoadGeneration
+        requestedRootURL = rootURL
+
         let loadedRoot = try await loader.loadRoot(at: rootURL)
         try Task.checkCancellation()
+
+        guard loadGeneration == rootLoadGeneration, requestedRootURL == rootURL else {
+            throw CancellationError()
+        }
+
+        try startWatchingRoot(rootURL)
+
         root = loadedRoot
-        selectedNodeID = nil
+        currentRootURL = rootURL
+
+        if resetSelection {
+            selectedNodeID = nil
+        }
     }
 
     func loadRoot(workspace: Workspace) async throws {
@@ -57,9 +112,73 @@ final class FileTreeStore: ObservableObject {
     }
 
     func clear() {
+        rootLoadGeneration += 1
+        reloadTask?.cancel()
+        reloadTask = nil
+        watchDebouncer.cancel()
+        stopWatchingCurrentRoot()
+        requestedRootURL = nil
         root = nil
         selectedNodeID = nil
         filterText = ""
+    }
+
+    private func handleDebouncedWatchEvents(_ events: [FileWatchEvent]) {
+        guard let currentRootURL else {
+            return
+        }
+
+        guard events.contains(where: { event in
+            event.scope == .workspaceRoot(currentRootURL)
+        }) else {
+            return
+        }
+
+        reloadTask?.cancel()
+        reloadTask = Task { @MainActor [weak self, currentRootURL] in
+            do {
+                try await self?.reloadCurrentRoot(rootURL: currentRootURL)
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func reloadCurrentRoot(rootURL: URL) async throws {
+        guard currentRootURL == rootURL, requestedRootURL == rootURL else {
+            return
+        }
+
+        try await loadRoot(rootURL: rootURL, resetSelection: false)
+    }
+
+    private func startWatchingRoot(_ rootURL: URL) throws {
+        let newScope = FileWatchScope.workspaceRoot(rootURL)
+
+        if let currentRootURL {
+            let currentScope = FileWatchScope.workspaceRoot(currentRootURL)
+
+            guard currentScope != newScope else {
+                return
+            }
+
+            try watcher.startWatching(newScope)
+            watcher.stopWatching(currentScope)
+            return
+        }
+
+        try watcher.startWatching(newScope)
+    }
+
+    private func stopWatchingCurrentRoot() {
+        guard let currentRootURL else {
+            return
+        }
+
+        watcher.stopWatching(.workspaceRoot(currentRootURL))
+        self.currentRootURL = nil
     }
 }
 

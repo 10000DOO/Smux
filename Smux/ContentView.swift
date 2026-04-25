@@ -19,7 +19,13 @@ struct ContentView: View {
             workspaceStore: appComposition.workspaceStore,
             panelStore: appComposition.panelStore,
             notificationStore: appComposition.notificationStore,
-            fileTreeStore: appComposition.fileTreeStore
+            fileTreeStore: appComposition.fileTreeStore,
+            documentSessionStore: appComposition.documentSessionStore,
+            previewSessionStore: appComposition.previewSessionStore,
+            documentTextStore: appComposition.documentTextStore,
+            terminalSessionController: appComposition.terminalSessionController,
+            terminalOutputStore: appComposition.terminalOutputStore,
+            commandRouter: appComposition.commandRouter
         )
         .toolbar {
             Button {
@@ -47,6 +53,13 @@ private final class AppComposition: ObservableObject {
     let panelStore: PanelStore
     let notificationStore: NotificationStore
     let fileTreeStore: FileTreeStore
+    let documentSessionStore: DocumentSessionStore
+    let previewSessionStore: PreviewSessionStore
+    let documentTextStore: DocumentTextStore
+    let terminalSessionController: TerminalSessionController
+    let terminalOutputStore: TerminalOutputStore
+    let agentStateStore: AgentStateStore
+    let agentTerminalOutputMonitor: AgentTerminalOutputMonitor
     let recentWorkspaceStore: RecentWorkspaceStore
     let workspaceRepository: any WorkspaceRepository
     let workspaceCoordinator: WorkspaceCoordinator
@@ -59,19 +72,49 @@ private final class AppComposition: ObservableObject {
         let fileTreeStore = FileTreeStore()
         let systemNotificationDeliverer = UserNotificationCenterNotifier()
         let notificationStore = NotificationStore(systemNotifier: systemNotificationDeliverer)
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
+        let documentTextStore = DocumentTextStore()
+        let terminalOutputStore = TerminalOutputStore()
+        let agentStateStore = AgentStateStore()
+        let agentTerminalOutputMonitor = AgentTerminalOutputMonitor(
+            stateStore: agentStateStore,
+            notificationStore: notificationStore
+        )
+        let terminalOutputContext = TerminalOutputContext(
+            panelStore: panelStore,
+            outputStore: terminalOutputStore,
+            monitor: agentTerminalOutputMonitor
+        )
+        let terminalSessionController = TerminalSessionController(
+            outputHandler: { [terminalOutputContext] sessionID, data in
+                terminalOutputContext.ingest(output: data, sessionID: sessionID)
+            }
+        )
+        terminalOutputContext.terminalSessionController = terminalSessionController
         let recentWorkspaceStore = RecentWorkspaceStore()
         let workspaceRepository = FileBackedWorkspaceRepository()
         let workspaceCoordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             workspaceRepository: workspaceRepository,
-            recentWorkspaceStore: recentWorkspaceStore
+            recentWorkspaceStore: recentWorkspaceStore,
+            documentSessionStore: documentSessionStore,
+            terminalSessionController: terminalSessionController,
+            previewSessionStore: previewSessionStore
         )
 
         self.workspaceStore = workspaceStore
         self.panelStore = panelStore
         self.notificationStore = notificationStore
         self.fileTreeStore = fileTreeStore
+        self.documentSessionStore = documentSessionStore
+        self.previewSessionStore = previewSessionStore
+        self.documentTextStore = documentTextStore
+        self.terminalSessionController = terminalSessionController
+        self.terminalOutputStore = terminalOutputStore
+        self.agentStateStore = agentStateStore
+        self.agentTerminalOutputMonitor = agentTerminalOutputMonitor
         self.recentWorkspaceStore = recentWorkspaceStore
         self.workspaceRepository = workspaceRepository
         self.workspaceCoordinator = workspaceCoordinator
@@ -117,6 +160,153 @@ private final class AppComposition: ObservableObject {
         }
 
         return cocoaError.code == .userCancelled
+    }
+}
+
+@MainActor
+final class PreviewSessionStore: ObservableObject {
+    @Published private(set) var states: [PreviewState.ID: PreviewState] = [:]
+    @Published private(set) var sourceDocumentIDs: [PreviewState.ID: DocumentSession.ID] = [:]
+
+    func bind(previewID: PreviewState.ID, sourceDocumentID: DocumentSession.ID) {
+        sourceDocumentIDs[previewID] = sourceDocumentID
+    }
+
+    func sourceDocumentID(for previewID: PreviewState.ID) -> DocumentSession.ID? {
+        sourceDocumentIDs[previewID]
+    }
+
+    func state(for previewID: PreviewState.ID) -> PreviewState? {
+        states[previewID]
+    }
+
+    func upsertState(_ state: PreviewState, for previewID: PreviewState.ID) {
+        var storedState = state
+        storedState.id = previewID
+        states[previewID] = storedState
+        sourceDocumentIDs[previewID] = storedState.sourceDocumentID
+    }
+
+    func upsertErrorState(
+        previewID: PreviewState.ID,
+        sourceDocumentID: DocumentSession.ID,
+        renderVersion: Int,
+        message: String
+    ) {
+        upsertState(
+            PreviewState(
+                id: previewID,
+                sourceDocumentID: sourceDocumentID,
+                renderVersion: renderVersion,
+                sanitizedMarkdown: nil,
+                mermaidBlocks: [],
+                errors: [
+                    PreviewRenderError(
+                        id: UUID(),
+                        message: message,
+                        sourceRange: nil
+                    )
+                ],
+                zoom: 1,
+                scrollAnchor: nil
+            ),
+            for: previewID
+        )
+    }
+
+    func removeState(for previewID: PreviewState.ID) {
+        states.removeValue(forKey: previewID)
+    }
+
+    func replaceStates(_ restoredStates: [PreviewState]) {
+        states = Dictionary(uniqueKeysWithValues: restoredStates.map { ($0.id, $0) })
+        sourceDocumentIDs = Dictionary(uniqueKeysWithValues: restoredStates.map { ($0.id, $0.sourceDocumentID) })
+    }
+
+    func snapshotStates() -> [PreviewState] {
+        var snapshotStates = states
+
+        for (previewID, sourceDocumentID) in sourceDocumentIDs where snapshotStates[previewID] == nil {
+            snapshotStates[previewID] = PreviewState(
+                id: previewID,
+                sourceDocumentID: sourceDocumentID,
+                renderVersion: 0,
+                sanitizedMarkdown: nil,
+                mermaidBlocks: [],
+                errors: [],
+                zoom: 1,
+                scrollAnchor: nil
+            )
+        }
+
+        return Array(snapshotStates.values)
+    }
+}
+
+nonisolated struct DocumentTextSnapshot: Equatable {
+    var text: String
+    var version: Int
+}
+
+@MainActor
+final class DocumentTextStore: ObservableObject {
+    @Published private(set) var snapshots: [DocumentSession.ID: DocumentTextSnapshot] = [:]
+
+    func snapshot(for documentID: DocumentSession.ID) -> DocumentTextSnapshot? {
+        snapshots[documentID]
+    }
+
+    func update(documentID: DocumentSession.ID, text: String, version: Int) {
+        snapshots[documentID] = DocumentTextSnapshot(text: text, version: version)
+    }
+
+    func clearAll() {
+        snapshots.removeAll()
+    }
+}
+
+@MainActor
+private final class TerminalOutputContext {
+    weak var terminalSessionController: TerminalSessionController?
+
+    private weak var panelStore: PanelStore?
+    private let outputStore: TerminalOutputStore
+    private let monitor: AgentTerminalOutputMonitor
+
+    init(
+        panelStore: PanelStore,
+        outputStore: TerminalOutputStore,
+        monitor: AgentTerminalOutputMonitor
+    ) {
+        self.panelStore = panelStore
+        self.outputStore = outputStore
+        self.monitor = monitor
+    }
+
+    func ingest(output data: Data, sessionID: TerminalSession.ID) {
+        guard let session = terminalSessionController?.session(for: sessionID) else {
+            return
+        }
+
+        outputStore.append(data, for: sessionID)
+        monitor.ingest(
+            output: data,
+            sessionID: sessionID,
+            workspaceID: session.workspaceID,
+            panelID: panelStore?.rootNode.panelID(containingTerminalSession: sessionID)
+        )
+    }
+}
+
+private extension PanelNode {
+    func panelID(containingTerminalSession sessionID: TerminalSession.ID) -> PanelNode.ID? {
+        if case let .terminal(storedSessionID) = surface, storedSessionID == sessionID, isLeaf {
+            return id
+        }
+
+        return children.lazy.compactMap {
+            $0.panelID(containingTerminalSession: sessionID)
+        }.first
     }
 }
 

@@ -76,7 +76,7 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertTrue(html.contains("[bad](javascript:alert)"))
     }
 
-    func testLeavesMermaidAsEscapedCodeAndDoesNotCreateMermaidBlocksYet() async throws {
+    func testExtractsMermaidFenceIntoPreviewStateAndPlaceholder() async throws {
         let pipeline = MarkdownPreviewPipeline()
         let markdown = """
         ```mermaid
@@ -87,10 +87,92 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
 
         let state = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
         let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+        let block = try XCTUnwrap(state.mermaidBlocks.first)
 
-        XCTAssertTrue(state.mermaidBlocks.isEmpty)
-        XCTAssertTrue(html.contains("<pre><code class=\"language-mermaid\">"))
-        XCTAssertTrue(html.contains("A --&gt; B"))
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertEqual(state.mermaidBlocks.count, 1)
+        XCTAssertEqual(block.sourceRange, SourceRange(startLine: 1, endLine: 4))
+        XCTAssertEqual(
+            block.source,
+            """
+            graph LR
+                A --> B
+            """
+        )
+        XCTAssertEqual(block.status, .pending)
+        XCTAssertNil(block.artifact)
+        XCTAssertNil(block.errorMessage)
+        XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(block.id.uuidString)\""))
+        XCTAssertTrue(html.contains("data-source-start-line=\"1\""))
+        XCTAssertTrue(html.contains("data-source-end-line=\"4\""))
+        XCTAssertFalse(html.contains("<pre><code class=\"language-mermaid\">"))
+        XCTAssertFalse(html.contains("A --&gt; B"))
+    }
+
+    func testExtractsMmdAndTildeMermaidFencesWithoutDuplicatingSourceCodeHTML() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let markdown = """
+        # Diagrams
+
+        ```mmd
+        sequenceDiagram
+        Alice->>Bob: Hi
+        ```
+
+        ~~~mermaid
+        graph TD
+        A --> B
+        ~~~
+        """
+
+        let state = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertEqual(state.mermaidBlocks.count, 2)
+        XCTAssertEqual(state.mermaidBlocks[0].sourceRange, SourceRange(startLine: 3, endLine: 6))
+        XCTAssertEqual(state.mermaidBlocks[0].source, "sequenceDiagram\nAlice->>Bob: Hi")
+        XCTAssertEqual(state.mermaidBlocks[1].sourceRange, SourceRange(startLine: 8, endLine: 11))
+        XCTAssertEqual(state.mermaidBlocks[1].source, "graph TD\nA --> B")
+        XCTAssertTrue(html.contains("<h1>Diagrams</h1>"))
+        XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(state.mermaidBlocks[0].id.uuidString)\""))
+        XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(state.mermaidBlocks[1].id.uuidString)\""))
+        XCTAssertFalse(html.contains("language-mmd"))
+        XCTAssertFalse(html.contains("language-mermaid"))
+        XCTAssertFalse(html.contains("Alice-&gt;&gt;Bob"))
+        XCTAssertFalse(html.contains("A --&gt; B"))
+    }
+
+    func testUnclosedMermaidFenceProducesDeterministicBlockAndError() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let markdown = """
+        Before
+
+        ```mermaid
+        graph LR
+        A --> B
+        """
+
+        let first = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let second = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let firstHTML = try XCTUnwrap(first.sanitizedMarkdown?.html)
+        let secondHTML = try XCTUnwrap(second.sanitizedMarkdown?.html)
+        let block = try XCTUnwrap(first.mermaidBlocks.first)
+        let error = try XCTUnwrap(first.errors.first)
+
+        XCTAssertEqual(first.mermaidBlocks, second.mermaidBlocks)
+        XCTAssertEqual(first.errors, second.errors)
+        XCTAssertEqual(firstHTML, secondHTML)
+        XCTAssertEqual(first.mermaidBlocks.count, 1)
+        XCTAssertEqual(block.sourceRange, SourceRange(startLine: 3, endLine: 5))
+        XCTAssertEqual(block.source, "graph LR\nA --> B")
+        XCTAssertEqual(block.errorMessage, "Unclosed Mermaid code fence.")
+        XCTAssertEqual(first.errors.count, 1)
+        XCTAssertEqual(error.message, "Unclosed Mermaid code fence.")
+        XCTAssertEqual(error.sourceRange, SourceRange(startLine: 3, endLine: 5))
+        XCTAssertTrue(firstHTML.contains("<p>Before</p>"))
+        XCTAssertTrue(firstHTML.contains("data-mermaid-block-id=\"\(block.id.uuidString)\""))
+        XCTAssertFalse(firstHTML.contains("<pre><code class=\"language-mermaid\">"))
     }
 
     func testModelsStaleRenderResultsByVersion() async throws {
@@ -98,10 +180,20 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         let documentID = DocumentSession.ID()
 
         let current = try await pipeline.render(documentID: documentID, text: "# Current", version: 2)
-        let stale = try await pipeline.render(documentID: documentID, text: "# Stale", version: 1)
+        let stale = try await pipeline.render(
+            documentID: documentID,
+            text: """
+            ```mermaid
+            graph LR
+            A --> B
+            ```
+            """,
+            version: 1
+        )
 
         XCTAssertNotNil(current.sanitizedMarkdown)
         XCTAssertNil(stale.sanitizedMarkdown)
+        XCTAssertTrue(stale.mermaidBlocks.isEmpty)
         XCTAssertEqual(stale.renderVersion, 1)
         XCTAssertTrue(stale.errors.contains { $0.message.contains("Stale preview render ignored") })
 

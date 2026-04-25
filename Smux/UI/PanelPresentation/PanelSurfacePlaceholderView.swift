@@ -5,6 +5,7 @@ struct PanelSurfacePlaceholderView: View {
     var isFocused: Bool
     var onReplaceSurface: (PanelSurfaceDescriptor) -> Void
     var onSplit: (SplitDirection) -> Void
+    var onCreateTerminal: () -> Void = {}
 
     var body: some View {
         let presentation = PanelSurfacePresentation(surface: surface)
@@ -32,21 +33,9 @@ struct PanelSurfacePlaceholderView: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Button {
-                    onReplaceSurface(.terminal(sessionID: UUID()))
+                    onCreateTerminal()
                 } label: {
                     Label("Terminal", systemImage: "terminal")
-                }
-
-                Button {
-                    onReplaceSurface(.editor(documentID: UUID()))
-                } label: {
-                    Label("Editor", systemImage: "doc.text")
-                }
-
-                Button {
-                    onReplaceSurface(.preview(previewID: UUID()))
-                } label: {
-                    Label("Preview", systemImage: "eye")
                 }
             }
 

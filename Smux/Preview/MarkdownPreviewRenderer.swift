@@ -6,6 +6,7 @@ nonisolated protocol MarkdownPreviewRendering {
 
 nonisolated struct MarkdownPreviewRenderResult: Hashable {
     var sanitizedMarkdown: SanitizedMarkdown
+    var mermaidBlocks: [MermaidBlockState]
     var errors: [PreviewRenderError]
 }
 
@@ -20,6 +21,7 @@ private nonisolated struct MarkdownHTMLRenderer {
     private let lines: [String]
     private var index = 0
     private var html: [String] = []
+    private var mermaidBlocks: [MermaidBlockState] = []
     private var errors: [PreviewRenderError] = []
 
     init(markdown: String) {
@@ -51,6 +53,7 @@ private nonisolated struct MarkdownHTMLRenderer {
 
         return MarkdownPreviewRenderResult(
             sanitizedMarkdown: SanitizedMarkdown(html: html.joined(separator: "\n")),
+            mermaidBlocks: mermaidBlocks,
             errors: errors
         )
     }
@@ -72,18 +75,58 @@ private nonisolated struct MarkdownHTMLRenderer {
             index += 1
         }
 
+        let sourceRange = SourceRange(startLine: startLine, endLine: didClose ? index : max(startLine, lines.count))
+        if fence.isMermaid {
+            renderMermaidPlaceholder(
+                source: codeLines.joined(separator: "\n"),
+                sourceRange: sourceRange,
+                didClose: didClose
+            )
+            return
+        }
+
         if !didClose {
             errors.append(
                 PreviewRenderError(
                     id: UUID(),
                     message: "Unclosed code fence.",
-                    sourceRange: SourceRange(startLine: startLine, endLine: max(startLine, lines.count))
+                    sourceRange: sourceRange
                 )
             )
         }
 
         let languageClass = fence.language.map { " class=\"language-\(escapeAttribute($0))\"" } ?? ""
         html.append("<pre><code\(languageClass)>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>")
+    }
+
+    private mutating func renderMermaidPlaceholder(source: String, sourceRange: SourceRange, didClose: Bool) {
+        let id = stableUUID(seed: "mermaid:\(sourceRange.startLine):\(sourceRange.endLine):\(source)")
+        let block = MermaidBlockState(
+            id: id,
+            sourceRange: sourceRange,
+            source: source,
+            status: .pending,
+            artifact: nil,
+            errorMessage: didClose ? nil : "Unclosed Mermaid code fence."
+        )
+
+        mermaidBlocks.append(block)
+
+        if !didClose {
+            errors.append(
+                PreviewRenderError(
+                    id: stableUUID(seed: "error:unclosed-mermaid:\(sourceRange.startLine):\(sourceRange.endLine):\(source)"),
+                    message: "Unclosed Mermaid code fence.",
+                    sourceRange: sourceRange
+                )
+            )
+        }
+
+        html.append(
+            """
+            <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(escapeAttribute(id.uuidString))" data-source-start-line="\(sourceRange.startLine)" data-source-end-line="\(sourceRange.endLine)"></div>
+            """
+        )
     }
 
     private mutating func renderTable() {
@@ -379,6 +422,15 @@ private nonisolated struct HeadingInfo {
 private nonisolated struct CodeFenceInfo {
     var marker: String
     var language: String?
+
+    var isMermaid: Bool {
+        guard let language else {
+            return false
+        }
+
+        let normalized = language.lowercased()
+        return normalized == "mermaid" || normalized == "mmd"
+    }
 }
 
 private nonisolated func escapeHTML(_ value: String) -> String {
@@ -392,4 +444,37 @@ private nonisolated func escapeHTML(_ value: String) -> String {
 
 private nonisolated func escapeAttribute(_ value: String) -> String {
     escapeHTML(value)
+}
+
+private nonisolated func stableUUID(seed: String) -> UUID {
+    let first = fnv1a64(seed.utf8, offset: 14695981039346656037)
+    let secondSeed = String(seed.reversed())
+    let second = fnv1a64(secondSeed.utf8, offset: 1099511628211)
+    var bytes = [UInt8](repeating: 0, count: 16)
+
+    for offset in 0..<8 {
+        bytes[offset] = UInt8(truncatingIfNeeded: first >> UInt64((7 - offset) * 8))
+        bytes[offset + 8] = UInt8(truncatingIfNeeded: second >> UInt64((7 - offset) * 8))
+    }
+
+    bytes[6] = (bytes[6] & 0x0F) | 0x50
+    bytes[8] = (bytes[8] & 0x3F) | 0x80
+
+    return UUID(uuid: (
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+        bytes[8], bytes[9], bytes[10], bytes[11],
+        bytes[12], bytes[13], bytes[14], bytes[15]
+    ))
+}
+
+private nonisolated func fnv1a64<S: Sequence>(_ bytes: S, offset: UInt64) -> UInt64 where S.Element == UInt8 {
+    var hash = offset
+
+    for byte in bytes {
+        hash ^= UInt64(byte)
+        hash = hash &* 1099511628211
+    }
+
+    return hash
 }

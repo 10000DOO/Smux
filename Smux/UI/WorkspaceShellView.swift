@@ -5,6 +5,12 @@ struct WorkspaceShellView: View {
     @ObservedObject var panelStore: PanelStore
     @ObservedObject var notificationStore: NotificationStore
     @ObservedObject var fileTreeStore: FileTreeStore
+    @ObservedObject var documentSessionStore: DocumentSessionStore
+    @ObservedObject var previewSessionStore: PreviewSessionStore
+    @ObservedObject var documentTextStore: DocumentTextStore
+    @ObservedObject var terminalSessionController: TerminalSessionController
+    @ObservedObject var terminalOutputStore: TerminalOutputStore
+    var commandRouter: AppCommandRouter
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,13 +30,19 @@ struct WorkspaceShellView: View {
             SplitPanelView(
                 node: panelStore.rootNode,
                 focusedPanelID: panelStore.focusedPanelID,
+                documentSessionStore: documentSessionStore,
+                previewSessionStore: previewSessionStore,
+                documentTextStore: documentTextStore,
+                terminalSessionController: terminalSessionController,
+                terminalOutputStore: terminalOutputStore,
                 onFocus: { panelStore.focus(panelID: $0) },
                 onReplaceSurface: { panelID, surface in
                     panelStore.replacePanel(panelID: panelID, with: surface)
                 },
                 onSplit: { panelID, direction in
                     panelStore.splitPanel(panelID: panelID, direction: direction, surface: .empty)
-                }
+                },
+                onCreateTerminal: createTerminal
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -69,5 +81,57 @@ private extension WorkspaceShellView {
 
     func selectFileTreeNode(_ nodeID: FileTreeNode.ID) {
         fileTreeStore.selectedNodeID = nodeID
+
+        guard let node = fileTreeStore.root?.node(id: nodeID) else {
+            return
+        }
+
+        switch node.kind {
+        case .directory:
+            expandFileTreeNode(nodeID)
+        case .file:
+            Task { @MainActor in
+                do {
+                    try await commandRouter.openDocument(node.url, preferredSurface: .split)
+                } catch {
+                    workspaceStore.openErrorMessage = "Failed to open document: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func createTerminal() {
+        guard let workspaceID = workspaceStore.activeWorkspace?.id else {
+            workspaceStore.openErrorMessage = "No workspace is currently active."
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await commandRouter.createTerminal(in: workspaceID)
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to create terminal: \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+private extension FileTreeNode {
+    func node(id targetID: ID) -> FileTreeNode? {
+        if id == targetID {
+            return self
+        }
+
+        guard case .loaded(let children) = childrenState else {
+            return nil
+        }
+
+        for child in children {
+            if let matchingNode = child.node(id: targetID) {
+                return matchingNode
+            }
+        }
+
+        return nil
     }
 }

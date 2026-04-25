@@ -107,7 +107,7 @@ final class FileTreeStoreTests: XCTestCase {
                 ],
             ]
         )
-        let store = FileTreeStore(loader: loader)
+        let store = FileTreeStore(loader: loader, watcher: ManualFileWatcher())
 
         try await store.loadRoot(rootURL: rootURL)
 
@@ -122,6 +122,61 @@ final class FileTreeStoreTests: XCTestCase {
         let docsNode = try XCTUnwrap(child(named: "Docs", in: root))
 
         XCTAssertEqual(loadedChildren(of: docsNode).map(\.name), ["Nested.md"])
+    }
+
+    @MainActor
+    func testWorkspaceRootWatchEventReloadsRoot() async throws {
+        let rootURL = URL(fileURLWithPath: "/tmp/root", isDirectory: true)
+        let watcher = ManualFileWatcher()
+        let loader = SequencedRootFileTreeLoader(
+            roots: [
+                makeRoot(url: rootURL, childNames: ["Before.md"]),
+                makeRoot(url: rootURL, childNames: ["After.md"]),
+            ]
+        )
+        let store = FileTreeStore(
+            loader: loader,
+            watcher: watcher,
+            fileWatchDebounceInterval: 0
+        )
+
+        try await store.loadRoot(rootURL: rootURL)
+
+        XCTAssertEqual(loadedChildren(of: try XCTUnwrap(store.root)).map(\.name), ["Before.md"])
+
+        watcher.emit(FileWatchEvent(scope: .workspaceRoot(rootURL), kind: .contentsChanged))
+        try await waitUntil {
+            loader.loadedRootURLs.count == 2
+        }
+
+        XCTAssertEqual(loader.loadedRootURLs, [rootURL, rootURL])
+        XCTAssertEqual(loadedChildren(of: try XCTUnwrap(store.root)).map(\.name), ["After.md"])
+    }
+
+    @MainActor
+    func testClearStopsWorkspaceRootWatching() async throws {
+        let rootURL = URL(fileURLWithPath: "/tmp/root", isDirectory: true)
+        let watcher = ManualFileWatcher()
+        let loader = SequencedRootFileTreeLoader(
+            roots: [
+                makeRoot(url: rootURL, childNames: ["Before.md"]),
+                makeRoot(url: rootURL, childNames: ["After.md"]),
+            ]
+        )
+        let store = FileTreeStore(
+            loader: loader,
+            watcher: watcher,
+            fileWatchDebounceInterval: 0
+        )
+
+        try await store.loadRoot(rootURL: rootURL)
+        store.clear()
+
+        watcher.emit(FileWatchEvent(scope: .workspaceRoot(rootURL), kind: .contentsChanged))
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertNil(store.root)
+        XCTAssertEqual(loader.loadedRootURLs, [rootURL])
     }
 
     private func makeTemporaryRoot() throws -> URL {
@@ -161,6 +216,47 @@ final class FileTreeStoreTests: XCTestCase {
     private func child(named name: String, in node: FileTreeNode) -> FileTreeNode? {
         loadedChildren(of: node).first { $0.name == name }
     }
+
+    private func makeRoot(url: URL, childNames: [String]) -> FileTreeNode {
+        FileTreeNode(
+            id: FileTreeNode.ID(),
+            url: url,
+            name: url.lastPathComponent,
+            kind: .directory,
+            isDocumentCandidate: false,
+            childrenState: .loaded(
+                childNames.map { childName in
+                    FileTreeNode(
+                        id: FileTreeNode.ID(),
+                        url: url.appendingPathComponent(childName, isDirectory: false),
+                        name: childName,
+                        kind: .file,
+                        isDocumentCandidate: true,
+                        childrenState: .loaded([]),
+                        gitStatus: nil
+                    )
+                }
+            ),
+            gitStatus: nil
+        )
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 1,
+        condition: @MainActor () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            if await condition() {
+                return
+            }
+
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTFail("Timed out waiting for condition.")
+    }
 }
 
 private final class RecordingFileTreeLoader: FileTreeLoading {
@@ -180,5 +276,23 @@ private final class RecordingFileTreeLoader: FileTreeLoading {
     func loadChildren(of directoryURL: URL) async throws -> [FileTreeNode] {
         loadedChildrenURLs.append(directoryURL)
         return childrenByDirectoryURL[directoryURL, default: []]
+    }
+}
+
+private final class SequencedRootFileTreeLoader: FileTreeLoading {
+    private var roots: [FileTreeNode]
+    private(set) var loadedRootURLs: [URL] = []
+
+    init(roots: [FileTreeNode]) {
+        self.roots = roots
+    }
+
+    func loadRoot(at rootURL: URL) async throws -> FileTreeNode {
+        loadedRootURLs.append(rootURL)
+        return roots.removeFirst()
+    }
+
+    func loadChildren(of directoryURL: URL) async throws -> [FileTreeNode] {
+        []
     }
 }
