@@ -19,6 +19,7 @@ struct ContentView: View {
             workspaceStore: appComposition.workspaceStore,
             panelStore: appComposition.panelStore,
             notificationStore: appComposition.notificationStore,
+            recentWorkspaceStore: appComposition.recentWorkspaceStore,
             fileTreeStore: appComposition.fileTreeStore,
             documentSessionStore: appComposition.documentSessionStore,
             previewSessionStore: appComposition.previewSessionStore,

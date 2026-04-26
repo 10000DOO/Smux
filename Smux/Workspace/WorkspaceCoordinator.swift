@@ -139,16 +139,24 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     func createTerminal(in workspaceID: Workspace.ID) async throws {
+        try await createTerminal(in: workspaceID, replacingPanel: nil)
+    }
+
+    func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID) async throws {
+        try await createTerminal(in: workspaceID, replacingPanel: Optional(panelID))
+    }
+
+    func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID?) async throws {
         guard let workspace = workspaceStore?.workspaces.first(where: { $0.id == workspaceID }) else {
             throw WorkspaceCoordinatorError.workspaceNotFound
         }
 
         guard let session = try await terminalSessionController?.createSession(in: workspace, command: []) else {
-            panelStore?.replaceFocusedPanel(with: .terminal(sessionID: TerminalSession.ID()))
+            replacePanel(with: .terminal(sessionID: TerminalSession.ID()), preferredPanelID: panelID)
             return
         }
 
-        panelStore?.replaceFocusedPanel(with: .terminal(sessionID: session.id))
+        replacePanel(with: .terminal(sessionID: session.id), preferredPanelID: panelID)
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
@@ -170,6 +178,15 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentSessionStore?.replaceSessions(snapshot?.documents ?? [])
         previewSessionStore?.replaceStates(snapshot?.previews ?? [])
         terminalSessionController?.replaceSnapshotSessions(snapshot?.sessions ?? [])
+    }
+
+    private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {
+        if let panelID, panelStore?.rootNode.containsLeaf(panelID: panelID) == true {
+            panelStore?.replacePanel(panelID: panelID, with: surface)
+            return
+        }
+
+        panelStore?.replaceFocusedPanel(with: surface)
     }
 }
 

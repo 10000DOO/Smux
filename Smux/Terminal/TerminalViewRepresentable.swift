@@ -50,6 +50,9 @@ struct TerminalViewRepresentable: NSViewRepresentable {
 
         scrollView.documentView = textView
         updateText(buffer, in: textView)
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+        }
         return scrollView
     }
 
@@ -92,6 +95,16 @@ final class TerminalTextView: NSTextView {
         true
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
             super.keyDown(with: event)
@@ -129,5 +142,28 @@ final class TerminalTextView: NSTextView {
         }
 
         inputHandler?(input)
+    }
+}
+
+nonisolated struct TerminalGridSizeEstimator: Equatable {
+    var columns: Int
+    var rows: Int
+
+    static func estimate(
+        size: CGSize,
+        characterWidth: CGFloat = 8,
+        rowHeight: CGFloat = 17,
+        horizontalInset: CGFloat = 16,
+        verticalInset: CGFloat = 16
+    ) -> TerminalGridSizeEstimator {
+        let usableWidth = max(0, size.width - horizontalInset)
+        let usableHeight = max(0, size.height - verticalInset)
+        let safeCharacterWidth = max(1, characterWidth)
+        let safeRowHeight = max(1, rowHeight)
+
+        return TerminalGridSizeEstimator(
+            columns: max(1, Int(usableWidth / safeCharacterWidth)),
+            rows: max(1, Int(usableHeight / safeRowHeight))
+        )
     }
 }

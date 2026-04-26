@@ -619,6 +619,43 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorCreateTerminalReplacesRequestedPanel() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/TargetedTerminalWorkspace")
+        )
+        let firstPanelID = PanelNode.ID()
+        let secondPanelID = PanelNode.ID()
+        let panelStore = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: firstPanelID, surface: .empty),
+                second: .leaf(id: secondPanelID, surface: .empty)
+            ),
+            focusedPanelID: firstPanelID
+        )
+        let client = WorkspacePanelMockPTYClient(processID: 1357)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController
+        )
+
+        try await coordinator.createTerminal(in: workspace.id, replacingPanel: secondPanelID)
+
+        XCTAssertEqual(panelStore.rootNode.children.first?.surface, .empty)
+        guard case let .terminal(sessionID) = panelStore.rootNode.children.last?.surface else {
+            XCTFail("Expected terminal surface in requested panel.")
+            return
+        }
+        XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
+        XCTAssertEqual(terminalSessionController.session(for: sessionID)?.processID, 1357)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorCloseSavesSnapshotAndRemovesWorkspace() async {
         let activeWorkspace = Workspace.make(
             id: UUID(),
@@ -726,17 +763,23 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let rootURL = URL(fileURLWithPath: "/tmp/RoutedWorkspace")
         let documentURL = URL(fileURLWithPath: "/tmp/RoutedWorkspace/README.md")
         let workspaceID = Workspace.ID()
+        let closedWorkspaceID = Workspace.ID()
+        let panelID = PanelNode.ID()
         let splitSurface = PanelSurfaceDescriptor.empty
 
         try await router.openWorkspace(rootURL: rootURL)
+        try await router.closeWorkspace(id: closedWorkspaceID)
         try await router.openDocument(documentURL, preferredSurface: .split)
         try await router.createTerminal(in: workspaceID)
+        try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
         router.splitFocusedPanel(direction: .vertical, surface: splitSurface)
 
         XCTAssertEqual(handler.openedRootURL, rootURL)
+        XCTAssertEqual(handler.closedWorkspaceID, closedWorkspaceID)
         XCTAssertEqual(handler.openedDocumentURL, documentURL)
         XCTAssertEqual(handler.openedDocumentMode, .split)
         XCTAssertEqual(handler.terminalWorkspaceID, workspaceID)
+        XCTAssertEqual(handler.terminalPanelID, panelID)
         XCTAssertEqual(handler.splitDirection, .vertical)
         XCTAssertEqual(handler.splitSurface, splitSurface)
     }
@@ -749,6 +792,15 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         do {
             try await router.openWorkspace(rootURL: rootURL)
+            XCTFail("Expected missing workspace handler error.")
+        } catch let error as AppCommandRouterError {
+            XCTAssertEqual(error, .missingWorkspaceOpening)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        do {
+            try await router.closeWorkspace(id: Workspace.ID())
             XCTFail("Expected missing workspace handler error.")
         } catch let error as AppCommandRouterError {
             XCTAssertEqual(error, .missingWorkspaceOpening)
@@ -874,6 +926,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var openedDocumentURL: URL?
         var openedDocumentMode: DocumentOpenMode?
         var terminalWorkspaceID: Workspace.ID?
+        var terminalPanelID: PanelNode.ID?
         var splitDirection: SplitDirection?
         var splitSurface: PanelSurfaceDescriptor?
 
@@ -892,6 +945,16 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         func createTerminal(in workspaceID: Workspace.ID) async throws {
             terminalWorkspaceID = workspaceID
+        }
+
+        func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID?) async throws {
+            terminalWorkspaceID = workspaceID
+            terminalPanelID = panelID
+        }
+
+        func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID) async throws {
+            terminalWorkspaceID = workspaceID
+            terminalPanelID = panelID
         }
 
         func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {

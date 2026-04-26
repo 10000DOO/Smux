@@ -11,7 +11,7 @@ struct SplitPanelView: View {
     var onFocus: (PanelNode.ID) -> Void
     var onReplaceSurface: (PanelNode.ID, PanelSurfaceDescriptor) -> Void
     var onSplit: (PanelNode.ID, SplitDirection) -> Void
-    var onCreateTerminal: () -> Void
+    var onCreateTerminal: (PanelNode.ID) -> Void
 
     var body: some View {
         switch node.kind {
@@ -99,7 +99,9 @@ struct SplitPanelView: View {
                     onSplit: { direction in
                         onSplit(panelID, direction)
                     },
-                    onCreateTerminal: onCreateTerminal
+                    onCreateTerminal: {
+                        onCreateTerminal(panelID)
+                    }
                 )
             }
         }
@@ -141,10 +143,18 @@ private struct TerminalPanelSurfaceView: View {
         VStack(spacing: 0) {
             TerminalPanelHeader(session: session)
 
-            TerminalViewRepresentable(
-                buffer: terminalOutputStore.output(for: sessionID),
-                onInput: viewModel.sendInput
-            )
+            GeometryReader { proxy in
+                TerminalViewRepresentable(
+                    buffer: terminalOutputStore.output(for: sessionID),
+                    onInput: viewModel.sendInput
+                )
+                .onAppear {
+                    resizeTerminal(to: proxy.size)
+                }
+                .onChange(of: proxy.size) { _, newSize in
+                    resizeTerminal(to: newSize)
+                }
+            }
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
@@ -161,6 +171,11 @@ private struct TerminalPanelSurfaceView: View {
 
     private func syncSession() {
         viewModel.session = session
+    }
+
+    private func resizeTerminal(to size: CGSize) {
+        let gridSize = TerminalGridSizeEstimator.estimate(size: size)
+        viewModel.resize(columns: gridSize.columns, rows: gridSize.rows)
     }
 }
 

@@ -19,7 +19,17 @@ protocol DocumentOpening {
 
 @MainActor
 protocol TerminalCommanding {
-    func createTerminal(in workspaceID: Workspace.ID) async throws
+    func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID?) async throws
+}
+
+extension TerminalCommanding {
+    func createTerminal(in workspaceID: Workspace.ID) async throws {
+        try await createTerminal(in: workspaceID, replacingPanel: nil)
+    }
+
+    func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID) async throws {
+        try await createTerminal(in: workspaceID, replacingPanel: Optional(panelID))
+    }
 }
 
 @MainActor

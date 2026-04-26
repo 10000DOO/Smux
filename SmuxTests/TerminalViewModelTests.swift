@@ -118,6 +118,22 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertTrue(inputs.isEmpty)
     }
 
+    func testTerminalGridSizeEstimatorClampsAndUsesInsets() {
+        let gridSize = TerminalGridSizeEstimator.estimate(
+            size: CGSize(width: 96, height: 50),
+            characterWidth: 8,
+            rowHeight: 17,
+            horizontalInset: 16,
+            verticalInset: 16
+        )
+
+        XCTAssertEqual(gridSize, TerminalGridSizeEstimator(columns: 10, rows: 2))
+        XCTAssertEqual(
+            TerminalGridSizeEstimator.estimate(size: .zero),
+            TerminalGridSizeEstimator(columns: 1, rows: 1)
+        )
+    }
+
     func testSendInputAndResizeDelegateToTerminalCoreAndRefreshMetadata() {
         let sessionID = TerminalSession.ID()
         let initialSession = makeSession(

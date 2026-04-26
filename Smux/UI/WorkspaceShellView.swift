@@ -4,6 +4,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var workspaceStore: WorkspaceStore
     @ObservedObject var panelStore: PanelStore
     @ObservedObject var notificationStore: NotificationStore
+    @ObservedObject var recentWorkspaceStore: RecentWorkspaceStore
     @ObservedObject var fileTreeStore: FileTreeStore
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
@@ -16,13 +17,18 @@ struct WorkspaceShellView: View {
         HStack(spacing: 0) {
             LeftRailView(
                 workspace: workspaceStore.activeWorkspace,
+                workspaces: workspaceStore.workspaces,
+                recentWorkspaces: recentWorkspaceStore.recentWorkspaces,
                 rootNode: panelStore.rootNode,
                 focusedPanelID: panelStore.focusedPanelID,
                 notifications: notificationStore.notifications,
                 fileTreeRoot: fileTreeStore.root,
                 selectedFileTreeNodeID: fileTreeStore.selectedNodeID,
                 onExpandFileTreeNode: expandFileTreeNode,
-                onSelectFileTreeNode: selectFileTreeNode
+                onSelectFileTreeNode: selectFileTreeNode,
+                onSelectWorkspace: selectWorkspace,
+                onCloseWorkspace: closeWorkspace,
+                onOpenRecentWorkspace: openRecentWorkspace
             )
 
             Divider()
@@ -47,6 +53,23 @@ struct WorkspaceShellView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, minHeight: 560)
+        .alert(
+            "Smux",
+            isPresented: Binding(
+                get: { workspaceStore.openErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        workspaceStore.clearOpenError()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                workspaceStore.clearOpenError()
+            }
+        } message: {
+            Text(workspaceStore.openErrorMessage ?? "")
+        }
         .task(id: workspaceStore.activeWorkspace?.id) {
             await loadFileTreeForActiveWorkspace()
         }
@@ -66,6 +89,40 @@ private extension WorkspaceShellView {
             return
         } catch {
             workspaceStore.openErrorMessage = "Failed to load file tree: \(error.localizedDescription)"
+        }
+    }
+
+    func selectWorkspace(id: Workspace.ID) {
+        guard let workspace = workspaceStore.workspaces.first(where: { $0.id == id }) else {
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await commandRouter.openWorkspace(rootURL: workspace.rootURL)
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to switch workspace: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func closeWorkspace(id: Workspace.ID) {
+        Task { @MainActor in
+            do {
+                try await commandRouter.closeWorkspace(id: id)
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to close workspace: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func openRecentWorkspace(_ recentWorkspace: RecentWorkspace) {
+        Task { @MainActor in
+            do {
+                try await commandRouter.openWorkspace(rootURL: recentWorkspace.rootURL)
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to open recent workspace: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -100,7 +157,7 @@ private extension WorkspaceShellView {
         }
     }
 
-    func createTerminal() {
+    func createTerminal(in panelID: PanelNode.ID) {
         guard let workspaceID = workspaceStore.activeWorkspace?.id else {
             workspaceStore.openErrorMessage = "No workspace is currently active."
             return
@@ -108,7 +165,7 @@ private extension WorkspaceShellView {
 
         Task { @MainActor in
             do {
-                try await commandRouter.createTerminal(in: workspaceID)
+                try await commandRouter.createTerminal(in: workspaceID, replacingPanel: panelID)
             } catch {
                 workspaceStore.openErrorMessage = "Failed to create terminal: \(error.localizedDescription)"
             }

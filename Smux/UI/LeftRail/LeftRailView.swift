@@ -2,6 +2,8 @@ import SwiftUI
 
 struct LeftRailView: View {
     var workspace: Workspace?
+    var workspaces: [Workspace] = []
+    var recentWorkspaces: [RecentWorkspace] = []
     var rootNode: PanelNode
     var focusedPanelID: PanelNode.ID?
     var notifications: [WorkspaceNotification]
@@ -9,10 +11,17 @@ struct LeftRailView: View {
     var selectedFileTreeNodeID: FileTreeNode.ID? = nil
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
+    var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
+    var onCloseWorkspace: (Workspace.ID) -> Void = { _ in }
+    var onOpenRecentWorkspace: (RecentWorkspace) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             workspaceSummary
+
+            Divider()
+
+            workspaceList
 
             Divider()
 
@@ -52,6 +61,71 @@ private extension LeftRailView {
                     .lineLimit(1)
             }
         }
+    }
+
+    var workspaceList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Open", systemImage: "sidebar.left")
+                .font(.subheadline)
+
+            if workspaces.isEmpty {
+                Text("No open workspaces")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(workspaces) { listedWorkspace in
+                    workspaceRow(listedWorkspace)
+                }
+            }
+
+            if !recentWorkspaces.isEmpty {
+                Text("Recent")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+
+                ForEach(recentWorkspaces.prefix(3)) { recentWorkspace in
+                    Button {
+                        onOpenRecentWorkspace(recentWorkspace)
+                    } label: {
+                        Label(recentWorkspace.displayName, systemImage: "clock")
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    func workspaceRow(_ listedWorkspace: Workspace) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                onSelectWorkspace(listedWorkspace.id)
+            } label: {
+                Label(
+                    listedWorkspace.displayName,
+                    systemImage: listedWorkspace.id == workspace?.id ? "smallcircle.filled.circle" : "circle"
+                )
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                onCloseWorkspace(listedWorkspace.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Close workspace")
+        }
+        .font(.caption)
+        .foregroundStyle(listedWorkspace.id == workspace?.id ? .primary : .secondary)
     }
 
     var panelsSummary: some View {
