@@ -319,8 +319,7 @@ private struct TerminalPanelSurfaceView: View {
 
             GeometryReader { proxy in
                 TerminalViewRepresentable(
-                    buffer: terminalOutputStore.output(for: sessionID),
-                    styledRuns: terminalOutputStore.styledOutput(for: sessionID),
+                    snapshot: terminalOutputStore.gridSnapshot(for: sessionID),
                     appearance: terminalPreferencesStore.appearance,
                     onInput: viewModel.sendInput
                 )

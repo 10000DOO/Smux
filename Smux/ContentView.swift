@@ -29,7 +29,11 @@ struct ContentView: View {
             terminalSessionController: appComposition.terminalSessionController,
             terminalOutputStore: appComposition.terminalOutputStore,
             terminalPreferencesStore: appComposition.terminalPreferencesStore,
-            commandRouter: appComposition.commandRouter
+            commandRouter: appComposition.commandRouter,
+            onOpenWorkspace: {
+                appComposition.workspaceStore.clearOpenError()
+                isWorkspaceImporterPresented = true
+            }
         )
         .toolbar {
             Button {

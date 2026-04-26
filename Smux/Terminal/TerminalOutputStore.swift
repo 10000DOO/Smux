@@ -3,8 +3,7 @@ import Foundation
 
 @MainActor
 final class TerminalOutputStore: ObservableObject {
-    @Published private var outputs: [TerminalSession.ID: String] = [:]
-    @Published private var styledOutputs: [TerminalSession.ID: [TerminalStyledTextRun]] = [:]
+    @Published private var revision = 0
 
     private var buffers: [TerminalSession.ID: TerminalOutputBuffer] = [:]
     private let maximumCharacterCount: Int
@@ -14,41 +13,49 @@ final class TerminalOutputStore: ObservableObject {
     }
 
     func output(for sessionID: TerminalSession.ID) -> String {
-        outputs[sessionID] ?? ""
+        buffers[sessionID]?.displayText ?? ""
     }
 
     func styledOutput(for sessionID: TerminalSession.ID) -> [TerminalStyledTextRun] {
-        styledOutputs[sessionID] ?? []
+        buffers[sessionID]?.displayRuns ?? []
+    }
+
+    func gridSnapshot(for sessionID: TerminalSession.ID) -> TerminalGridSnapshot {
+        buffers[sessionID]?.displayGridSnapshot ?? .empty
     }
 
     func append(_ data: Data, for sessionID: TerminalSession.ID) {
         var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
         buffer.append(data)
         buffers[sessionID] = buffer
-        updateOutput(for: sessionID, from: buffer)
+        publishOutputChange()
     }
 
     func append(_ text: String, for sessionID: TerminalSession.ID) {
         var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
         buffer.append(text)
         buffers[sessionID] = buffer
-        updateOutput(for: sessionID, from: buffer)
+        publishOutputChange()
     }
 
     func clear(sessionID: TerminalSession.ID) {
-        buffers.removeValue(forKey: sessionID)
-        outputs.removeValue(forKey: sessionID)
-        styledOutputs.removeValue(forKey: sessionID)
+        guard buffers.removeValue(forKey: sessionID) != nil else {
+            return
+        }
+
+        publishOutputChange()
     }
 
     func clearAll() {
+        guard !buffers.isEmpty else {
+            return
+        }
+
         buffers.removeAll()
-        outputs.removeAll()
-        styledOutputs.removeAll()
+        publishOutputChange()
     }
 
-    private func updateOutput(for sessionID: TerminalSession.ID, from buffer: TerminalOutputBuffer) {
-        outputs[sessionID] = buffer.displayText
-        styledOutputs[sessionID] = buffer.displayRuns
+    private func publishOutputChange() {
+        revision &+= 1
     }
 }

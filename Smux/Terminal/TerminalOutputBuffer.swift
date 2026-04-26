@@ -26,6 +26,10 @@ nonisolated struct TerminalOutputBuffer: Equatable {
         displayBuffer.styledRuns
     }
 
+    var displayGridSnapshot: TerminalGridSnapshot {
+        displayBuffer.gridSnapshot
+    }
+
     mutating func append(_ output: String) {
         guard !output.isEmpty else {
             return

@@ -15,6 +15,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var terminalOutputStore: TerminalOutputStore
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     var commandRouter: AppCommandRouter
+    var onOpenWorkspace: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
@@ -30,9 +31,7 @@ struct WorkspaceShellView: View {
                 onExpandFileTreeNode: expandFileTreeNode,
                 onSelectFileTreeNode: selectFileTreeNode,
                 onSelectPanel: { commandRouter.focus(panelID: $0) },
-                onCreatePanel: {
-                    commandRouter.createPanel(splitDirection: .horizontal, surface: .empty)
-                },
+                onOpenWorkspace: onOpenWorkspace,
                 onSelectWorkspace: selectWorkspace,
                 onCloseWorkspace: closeWorkspace,
                 onOpenRecentWorkspace: openRecentWorkspace,

@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Smux
 
@@ -60,6 +61,34 @@ final class TerminalOutputStoreTests: XCTestCase {
         )
     }
 
+    func testGridSnapshotPreservesStyledDisplayCells() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+
+        store.append("\u{1B}[34m한\u{1B}[0m!", for: sessionID)
+
+        let snapshot = store.gridSnapshot(for: sessionID)
+        XCTAssertEqual(snapshot.text, "한!")
+        XCTAssertEqual(snapshot.lines.first?.displayWidth, 3)
+        XCTAssertEqual(snapshot.lines.first?.cells.map(\.width), [2, 1])
+        XCTAssertEqual(snapshot.lines.first?.cells.first?.style.foreground, .ansi(.blue))
+    }
+
+    func testAppendPublishesSingleChangePerChunk() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+        var changeCount = 0
+        var cancellable: AnyCancellable?
+        cancellable = store.objectWillChange.sink {
+            changeCount += 1
+        }
+
+        store.append("chunk", for: sessionID)
+
+        XCTAssertEqual(changeCount, 1)
+        _ = cancellable
+    }
+
     func testClearRemovesOnlyRequestedSessionOutput() {
         let firstSessionID = TerminalSession.ID()
         let secondSessionID = TerminalSession.ID()
@@ -72,5 +101,6 @@ final class TerminalOutputStoreTests: XCTestCase {
         XCTAssertEqual(store.output(for: firstSessionID), "")
         XCTAssertEqual(store.output(for: secondSessionID), "second")
         XCTAssertEqual(store.styledOutput(for: firstSessionID), [])
+        XCTAssertEqual(store.gridSnapshot(for: firstSessionID), .empty)
     }
 }

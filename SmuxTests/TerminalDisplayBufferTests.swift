@@ -138,6 +138,19 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "한!")
     }
 
+    func testGridSnapshotPreservesDisplayCellWidthsAndStyles() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("\u{1B}[32m한\u{1B}[0m!")
+
+        let snapshot = buffer.gridSnapshot
+
+        XCTAssertEqual(snapshot.text, "한!")
+        XCTAssertEqual(snapshot.lines.first?.displayWidth, 3)
+        XCTAssertEqual(snapshot.lines.first?.cells.map(\.width), [2, 1])
+        XCTAssertEqual(snapshot.lines.first?.cells.first?.style.foreground, .ansi(.green))
+    }
+
     func testWritingInsideWideCharacterBlanksCoveredCell() {
         var buffer = TerminalDisplayBuffer()
 

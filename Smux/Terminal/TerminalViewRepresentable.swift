@@ -4,10 +4,19 @@ import SwiftUI
 struct TerminalViewRepresentable: NSViewRepresentable {
     typealias NSViewType = NSScrollView
 
-    var buffer: String
-    var styledRuns: [TerminalStyledTextRun]
+    var snapshot: TerminalGridSnapshot
     var appearance: TerminalAppearance
     var onInput: (String) -> Void
+
+    init(
+        snapshot: TerminalGridSnapshot,
+        appearance: TerminalAppearance = TerminalAppearance(),
+        onInput: @escaping (String) -> Void = { _ in }
+    ) {
+        self.snapshot = snapshot
+        self.appearance = appearance
+        self.onInput = onInput
+    }
 
     init(
         buffer: String = "",
@@ -15,8 +24,7 @@ struct TerminalViewRepresentable: NSViewRepresentable {
         appearance: TerminalAppearance = TerminalAppearance(),
         onInput: @escaping (String) -> Void = { _ in }
     ) {
-        self.buffer = buffer
-        self.styledRuns = styledRuns
+        self.snapshot = TerminalGridSnapshot(text: buffer, styledRuns: styledRuns)
         self.appearance = appearance
         self.onInput = onInput
     }
@@ -27,72 +35,58 @@ struct TerminalViewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        Self.configureScrollView(scrollView)
 
-        let textView = TerminalTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.isRichText = true
-        textView.importsGraphics = false
-        textView.usesFindPanel = true
-        textView.drawsBackground = true
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.inputHandler = context.coordinator.handleInput
+        let gridView = TerminalGridView()
+        gridView.autoresizingMask = [.width]
+        gridView.inputHandler = context.coordinator.handleInput
 
-        applyAppearance(to: scrollView, textView: textView)
-        scrollView.documentView = textView
-        context.coordinator.updateText(
-            buffer,
-            styledRuns: styledRuns,
+        applyAppearance(to: scrollView)
+        scrollView.documentView = gridView
+        gridView.update(snapshot: snapshot, appearance: appearance)
+        context.coordinator.updateSnapshot(
+            snapshot,
             appearance: appearance,
-            in: textView
+            in: gridView
         )
         DispatchQueue.main.async {
-            textView.window?.makeFirstResponder(textView)
+            gridView.window?.makeFirstResponder(gridView)
         }
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.onInput = onInput
-        guard let textView = nsView.documentView as? TerminalTextView else {
+        guard let gridView = nsView.documentView as? TerminalGridView else {
             return
         }
 
-        applyAppearance(to: nsView, textView: textView)
-        context.coordinator.updateText(
-            buffer,
-            styledRuns: styledRuns,
+        applyAppearance(to: nsView)
+        context.coordinator.updateSnapshot(
+            snapshot,
             appearance: appearance,
-            in: textView
+            in: gridView
         )
-        textView.inputHandler = context.coordinator.handleInput
+        gridView.inputHandler = context.coordinator.handleInput
     }
 
-    private func applyAppearance(to scrollView: NSScrollView, textView: NSTextView) {
+    private func applyAppearance(to scrollView: NSScrollView) {
         let palette = TerminalAppearancePalette.palette(for: appearance.theme)
         scrollView.backgroundColor = palette.background
-        textView.backgroundColor = palette.background
-        textView.textColor = palette.foreground
-        textView.font = TerminalFontMetrics.font(for: appearance.fontSize)
+    }
+
+    static func configureScrollView(_ scrollView: NSScrollView) {
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
     }
 
     final class Coordinator {
         var onInput: (String) -> Void
-        private var renderedBuffer = ""
-        private var renderedRuns: [TerminalStyledTextRun] = []
+        private var renderedSnapshot = TerminalGridSnapshot.empty
         private var renderedAppearance: TerminalAppearance?
 
         init(onInput: @escaping (String) -> Void) {
@@ -103,174 +97,32 @@ struct TerminalViewRepresentable: NSViewRepresentable {
             onInput(text)
         }
 
-        func updateText(
-            _ text: String,
-            styledRuns: [TerminalStyledTextRun],
+        func updateSnapshot(
+            _ snapshot: TerminalGridSnapshot,
             appearance: TerminalAppearance,
-            in textView: TerminalTextView
+            in gridView: TerminalGridView
         ) {
-            guard renderedBuffer != text
-                    || renderedRuns != styledRuns
+            let previousFrameSize = gridView.frame.size
+            gridView.resizeToFitVisibleWidth()
+            let didResize = previousFrameSize != gridView.frame.size
+            guard renderedSnapshot != snapshot
                     || renderedAppearance != appearance
-                    || textView.string != text else {
+                    || didResize else {
                 return
             }
 
-            let shouldFollowTail = textView.shouldFollowTailOnTextUpdate()
-            let visibleOrigin = textView.enclosingScrollView?.contentView.bounds.origin
-            let font = textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-            let attributedText = TerminalAttributedTextRenderer.attributedString(
-                text: text,
-                styledRuns: styledRuns,
-                font: font,
-                defaultForeground: textView.textColor ?? .labelColor,
-                appearance: appearance
-            )
-
-            textView.textStorage?.setAttributedString(attributedText)
-            renderedBuffer = text
-            renderedRuns = styledRuns
+            let shouldFollowTail = gridView.shouldFollowTailOnTextUpdate()
+            let visibleOrigin = gridView.enclosingScrollView?.contentView.bounds.origin
+            gridView.update(snapshot: snapshot, appearance: appearance)
+            renderedSnapshot = snapshot
             renderedAppearance = appearance
-            textView.ensureTextLayout()
 
             if shouldFollowTail {
-                textView.scrollToEndOfDocument(nil)
+                gridView.scrollToEnd()
             } else if let visibleOrigin {
-                textView.restoreVisibleOrigin(visibleOrigin)
+                gridView.restoreVisibleOrigin(visibleOrigin)
             }
         }
-    }
-}
-
-private struct TerminalAppearancePalette {
-    var background: NSColor
-    var foreground: NSColor
-    var ansi: [TerminalANSIColor: NSColor]
-
-    static func palette(for theme: TerminalTheme) -> TerminalAppearancePalette {
-        switch theme {
-        case .system:
-            return TerminalAppearancePalette(
-                background: .textBackgroundColor,
-                foreground: .labelColor,
-                ansi: systemANSIColors
-            )
-        case .light:
-            return TerminalAppearancePalette(
-                background: .white,
-                foreground: .black,
-                ansi: lightANSIColors
-            )
-        case .dark:
-            return TerminalAppearancePalette(
-                background: NSColor(calibratedWhite: 0.08, alpha: 1),
-                foreground: NSColor(calibratedWhite: 0.92, alpha: 1),
-                ansi: darkANSIColors
-            )
-        }
-    }
-
-    func color(for color: TerminalTextColor?) -> NSColor? {
-        guard case let .ansi(ansiColor) = color else {
-            return nil
-        }
-
-        return ansi[ansiColor]
-    }
-
-    private static let lightANSIColors: [TerminalANSIColor: NSColor] = [
-        .black: .black,
-        .red: .systemRed,
-        .green: .systemGreen,
-        .yellow: .systemYellow,
-        .blue: .systemBlue,
-        .magenta: .systemPurple,
-        .cyan: .systemCyan,
-        .white: NSColor(calibratedWhite: 0.35, alpha: 1),
-        .brightBlack: .systemGray,
-        .brightRed: .systemRed,
-        .brightGreen: .systemGreen,
-        .brightYellow: .systemYellow,
-        .brightBlue: .systemBlue,
-        .brightMagenta: .systemPink,
-        .brightCyan: .systemTeal,
-        .brightWhite: NSColor(calibratedWhite: 0.55, alpha: 1)
-    ]
-
-    private static let darkANSIColors: [TerminalANSIColor: NSColor] = [
-        .black: NSColor(calibratedWhite: 0.45, alpha: 1),
-        .red: .systemRed,
-        .green: .systemGreen,
-        .yellow: .systemYellow,
-        .blue: .systemBlue,
-        .magenta: .systemPurple,
-        .cyan: .systemCyan,
-        .white: NSColor(calibratedWhite: 0.9, alpha: 1),
-        .brightBlack: NSColor(calibratedWhite: 0.62, alpha: 1),
-        .brightRed: .systemRed,
-        .brightGreen: .systemGreen,
-        .brightYellow: .systemYellow,
-        .brightBlue: .systemBlue,
-        .brightMagenta: .systemPink,
-        .brightCyan: .systemTeal,
-        .brightWhite: .white
-    ]
-
-    private static let systemANSIColors: [TerminalANSIColor: NSColor] = [
-        .black: adaptiveColor(
-            light: .black,
-            dark: NSColor(calibratedWhite: 0.45, alpha: 1)
-        ),
-        .red: .systemRed,
-        .green: .systemGreen,
-        .yellow: .systemYellow,
-        .blue: .systemBlue,
-        .magenta: .systemPurple,
-        .cyan: .systemCyan,
-        .white: adaptiveColor(
-            light: NSColor(calibratedWhite: 0.35, alpha: 1),
-            dark: NSColor(calibratedWhite: 0.9, alpha: 1)
-        ),
-        .brightBlack: adaptiveColor(
-            light: .systemGray,
-            dark: NSColor(calibratedWhite: 0.62, alpha: 1)
-        ),
-        .brightRed: .systemRed,
-        .brightGreen: .systemGreen,
-        .brightYellow: .systemYellow,
-        .brightBlue: .systemBlue,
-        .brightMagenta: .systemPink,
-        .brightCyan: .systemTeal,
-        .brightWhite: adaptiveColor(
-            light: NSColor(calibratedWhite: 0.55, alpha: 1),
-            dark: .white
-        )
-    ]
-
-    private static func adaptiveColor(light: NSColor, dark: NSColor) -> NSColor {
-        NSColor(name: nil) { appearance in
-            if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-                return dark
-            }
-
-            return light
-        }
-    }
-}
-
-private enum TerminalFontMetrics {
-    static func font(for fontSize: Double) -> NSFont {
-        .monospacedSystemFont(
-            ofSize: CGFloat(TerminalAppearance.clampedFontSize(fontSize)),
-            weight: .regular
-        )
-    }
-
-    static func cellSize(for fontSize: Double) -> CGSize {
-        let font = font(for: fontSize)
-        let width = ceil(("W" as NSString).size(withAttributes: [.font: font]).width)
-        let height = ceil(NSLayoutManager().defaultLineHeight(for: font))
-        return CGSize(width: max(1, width), height: max(1, height))
     }
 }
 
@@ -347,158 +199,6 @@ enum TerminalAttributedTextRenderer {
         return font
     }
 
-}
-
-final class TerminalTextView: NSTextView {
-    var inputHandler: ((String) -> Void)?
-    private var terminalMarkedText = ""
-    private var terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
-
-    override var acceptsFirstResponder: Bool {
-        true
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.makeFirstResponder(self)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
-        super.mouseDown(with: event)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        let modifiers = TerminalInputModifiers(event.modifierFlags)
-        guard !modifiers.contains(.command) else {
-            super.keyDown(with: event)
-            return
-        }
-
-        guard let key = TerminalInputKey(event: event) else {
-            interpretKeyEvents([event])
-            return
-        }
-
-        switch key {
-        case .text:
-            interpretKeyEvents([event])
-        default:
-            if let input = TerminalInputTranslator.input(for: key, modifiers: modifiers) {
-                inputHandler?(input)
-            } else {
-                super.keyDown(with: event)
-            }
-        }
-    }
-
-    override func insertText(_ insertString: Any, replacementRange: NSRange) {
-        terminalMarkedText = ""
-        terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
-
-        guard let input = TerminalInputTextExtractor.text(from: insertString), !input.isEmpty else {
-            return
-        }
-
-        inputHandler?(input)
-    }
-
-    override func setMarkedText(
-        _ string: Any,
-        selectedRange: NSRange,
-        replacementRange: NSRange
-    ) {
-        terminalMarkedText = TerminalInputTextExtractor.text(from: string) ?? ""
-        terminalMarkedSelectedRange = selectedRange
-    }
-
-    override func unmarkText() {
-        terminalMarkedText = ""
-        terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
-    }
-
-    override func hasMarkedText() -> Bool {
-        !terminalMarkedText.isEmpty
-    }
-
-    override func markedRange() -> NSRange {
-        guard hasMarkedText() else {
-            return NSRange(location: NSNotFound, length: 0)
-        }
-
-        return NSRange(location: 0, length: (terminalMarkedText as NSString).length)
-    }
-
-    override func selectedRange() -> NSRange {
-        guard hasMarkedText() else {
-            return super.selectedRange()
-        }
-
-        return terminalMarkedSelectedRange
-    }
-
-    override func validAttributesForMarkedText() -> [NSAttributedString.Key] {
-        []
-    }
-
-    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        actualRange?.pointee = range
-        guard let window else {
-            return .zero
-        }
-
-        let localRect = bounds.isEmpty ? NSRect(origin: .zero, size: NSSize(width: 1, height: 1)) : bounds
-        return window.convertToScreen(convert(localRect, to: nil))
-    }
-
-    override func characterIndex(for point: NSPoint) -> Int {
-        0
-    }
-
-    override func paste(_ sender: Any?) {
-        guard let input = NSPasteboard.general.string(forType: .string), !input.isEmpty else {
-            return
-        }
-
-        inputHandler?(input)
-    }
-
-    fileprivate func shouldFollowTailOnTextUpdate() -> Bool {
-        guard let scrollView = enclosingScrollView else {
-            return true
-        }
-
-        ensureTextLayout()
-        let visibleBounds = scrollView.contentView.bounds
-        return TerminalScrollPolicy.shouldFollowTail(
-            visibleMaxY: visibleBounds.maxY,
-            visibleHeight: visibleBounds.height,
-            documentHeight: bounds.height
-        )
-    }
-
-    fileprivate func restoreVisibleOrigin(_ origin: NSPoint) {
-        guard let scrollView = enclosingScrollView else {
-            return
-        }
-
-        let contentView = scrollView.contentView
-        let y = TerminalScrollPolicy.clampedVisibleOriginY(
-            origin.y,
-            visibleHeight: contentView.bounds.height,
-            documentHeight: bounds.height
-        )
-        contentView.scroll(to: NSPoint(x: origin.x, y: y))
-        scrollView.reflectScrolledClipView(contentView)
-    }
-
-    fileprivate func ensureTextLayout() {
-        guard let textContainer else {
-            return
-        }
-
-        layoutManager?.ensureLayout(for: textContainer)
-    }
 }
 
 nonisolated enum TerminalInputTextExtractor {
@@ -702,10 +402,10 @@ nonisolated struct TerminalGridSizeEstimator: Equatable {
     static func estimate(
         size: CGSize,
         fontSize: Double,
-        horizontalInset: CGFloat = 16,
-        verticalInset: CGFloat = 16
+        horizontalInset: CGFloat = TerminalTypography.contentInsets.left + TerminalTypography.contentInsets.right,
+        verticalInset: CGFloat = TerminalTypography.contentInsets.top + TerminalTypography.contentInsets.bottom
     ) -> TerminalGridSizeEstimator {
-        let cellSize = TerminalFontMetrics.cellSize(for: fontSize)
+        let cellSize = TerminalTypography(fontSize: fontSize).cellSize
         return estimate(
             size: size,
             characterWidth: cellSize.width,

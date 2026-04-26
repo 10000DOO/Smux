@@ -12,7 +12,7 @@ struct LeftRailView: View {
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectPanel: (PanelNode.ID) -> Void = { _ in }
-    var onCreatePanel: () -> Void = {}
+    var onOpenWorkspace: () -> Void = {}
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
     var onCloseWorkspace: (Workspace.ID) -> Void = { _ in }
     var onOpenRecentWorkspace: (RecentWorkspace) -> Void = { _ in }
@@ -76,16 +76,16 @@ private extension LeftRailView {
 
             Spacer()
 
-            Button(action: onCreatePanel) {
-                Image(systemName: "plus")
+            Button(action: onOpenWorkspace) {
+                Image(systemName: "folder.badge.plus")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 26, height: 24)
+                    .frame(width: 28, height: 24)
             }
             .buttonStyle(.plain)
             .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
             .foregroundStyle(Color.accentColor)
-            .help("New panel")
-            .accessibilityLabel("New panel")
+            .help("Open workspace")
+            .accessibilityLabel("Open workspace")
         }
     }
 

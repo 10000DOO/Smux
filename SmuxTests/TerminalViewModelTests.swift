@@ -67,8 +67,8 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleOutput, "")
     }
 
-    func testTerminalTextViewDelegatesKeyInput() throws {
-        let textView = TerminalTextView()
+    func testTerminalGridViewDelegatesKeyInput() throws {
+        let textView = TerminalGridView()
         var inputs: [String] = []
         textView.inputHandler = { inputs.append($0) }
 
@@ -92,8 +92,8 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(inputs, ["a"])
     }
 
-    func testTerminalTextViewMapsArrowKeysToEscapeSequences() throws {
-        let textView = TerminalTextView()
+    func testTerminalGridViewMapsArrowKeysToEscapeSequences() throws {
+        let textView = TerminalGridView()
         var inputs: [String] = []
         textView.inputHandler = { inputs.append($0) }
         let upArrow = String(UnicodeScalar(NSUpArrowFunctionKey)!)
@@ -117,8 +117,8 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(inputs, ["\u{1B}[A"])
     }
 
-    func testTerminalTextViewDoesNotForwardCommandShortcutsAsInput() throws {
-        let textView = TerminalTextView()
+    func testTerminalGridViewDoesNotForwardCommandShortcutsAsInput() throws {
+        let textView = TerminalGridView()
         var inputs: [String] = []
         textView.inputHandler = { inputs.append($0) }
         let event = try XCTUnwrap(
@@ -141,8 +141,8 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertTrue(inputs.isEmpty)
     }
 
-    func testTerminalTextViewCommitsIMEInsertTextToInputHandler() {
-        let textView = TerminalTextView()
+    func testTerminalGridViewCommitsIMEInsertTextToInputHandler() {
+        let textView = TerminalGridView()
         var inputs: [String] = []
         textView.inputHandler = { inputs.append($0) }
 
@@ -155,8 +155,8 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertFalse(textView.hasMarkedText())
     }
 
-    func testTerminalTextViewDoesNotForwardMarkedIMEText() {
-        let textView = TerminalTextView()
+    func testTerminalGridViewDoesNotForwardMarkedIMEText() {
+        let textView = TerminalGridView()
         var inputs: [String] = []
         textView.inputHandler = { inputs.append($0) }
 
@@ -180,12 +180,70 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertFalse(textView.hasMarkedText())
     }
 
-    func testTerminalTextViewPreservesSelectionRangeOutsideIMEComposition() {
-        let textView = TerminalTextView()
-        textView.string = "output"
-        textView.setSelectedRange(NSRange(location: 1, length: 3))
+    func testTerminalGridViewDefaultsSelectionRangeOutsideIMEComposition() {
+        let textView = TerminalGridView()
 
-        XCTAssertEqual(textView.selectedRange(), NSRange(location: 1, length: 3))
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 0, length: 0))
+    }
+
+    func testTerminalGridViewExposesTextFinderSelectionGeometry() throws {
+        let textView = TerminalGridView(frame: NSRect(x: 0, y: 0, width: 240, height: 120))
+        textView.update(
+            snapshot: TerminalGridSnapshot(text: "abc\nfind", styledRuns: []),
+            appearance: TerminalAppearance()
+        )
+
+        textView.selectedRanges = [NSValue(range: NSRange(location: 4, length: 4))]
+
+        XCTAssertEqual(textView.string, "abc\nfind")
+        XCTAssertEqual(textView.firstSelectedRange, NSRange(location: 4, length: 4))
+        let rects = try XCTUnwrap(textView.rects(forCharacterRange: NSRange(location: 4, length: 4)))
+        XCTAssertEqual(rects.count, 1)
+        XCTAssertGreaterThan(rects[0].rectValue.width, 0)
+        XCTAssertGreaterThan(rects[0].rectValue.height, 0)
+    }
+
+    func testTerminalScrollViewEnablesHorizontalScrollerForLongLines() {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 80, height: 60))
+        let gridView = TerminalGridView()
+        TerminalViewRepresentable.configureScrollView(scrollView)
+        scrollView.documentView = gridView
+
+        gridView.update(
+            snapshot: TerminalGridSnapshot(text: String(repeating: "x", count: 80), styledRuns: []),
+            appearance: TerminalAppearance()
+        )
+
+        XCTAssertTrue(scrollView.hasVerticalScroller)
+        XCTAssertTrue(scrollView.hasHorizontalScroller)
+        XCTAssertGreaterThan(gridView.frame.width, scrollView.contentView.bounds.width)
+    }
+
+    func testTerminalCellRendererClipsCellsToDirtyRect() {
+        let typography = TerminalTypography.make(appearance: TerminalAppearance())
+        let line = TerminalGridLine(
+            cells: [
+                TerminalGridCell(text: "A"),
+                TerminalGridCell(text: "한", width: 2),
+                TerminalGridCell(text: "B"),
+                TerminalGridCell(text: "C"),
+                TerminalGridCell(text: "D")
+            ]
+        )
+        let dirtyRect = NSRect(
+            x: typography.textInsets.width + typography.cellSize.width * 2.5,
+            y: 0,
+            width: typography.cellSize.width * 1.7,
+            height: typography.cellSize.height
+        )
+
+        let visibleRange = TerminalCellRenderer.visibleCellRange(
+            in: line,
+            dirtyRect: dirtyRect,
+            typography: typography
+        )
+
+        XCTAssertEqual(Array(visibleRange), [1, 2, 3])
     }
 
     func testAttributedRendererAppliesTerminalStyles() throws {
@@ -252,6 +310,49 @@ final class TerminalViewModelTests: XCTestCase {
         )
         XCTAssertGreaterThan(darkBlack.red, 0.2)
         XCTAssertLessThan(lightWhite.red, 0.8)
+    }
+
+    func testTerminalGridSnapshotBuildsStyledCellsAndWideWidths() {
+        let redStyle = TerminalTextStyle(foreground: .ansi(.red), isBold: true)
+        let snapshot = TerminalGridSnapshot(
+            text: "A한\nB",
+            styledRuns: [
+                TerminalStyledTextRun(text: "A", style: .default),
+                TerminalStyledTextRun(text: "한", style: redStyle),
+                TerminalStyledTextRun(text: "\nB", style: .default)
+            ]
+        )
+
+        XCTAssertEqual(snapshot.text, "A한\nB")
+        XCTAssertEqual(snapshot.lines.count, 2)
+        XCTAssertEqual(snapshot.lines.first?.displayWidth, 3)
+        XCTAssertEqual(snapshot.lines.first?.cells.map(\.width), [1, 2])
+        XCTAssertEqual(snapshot.lines.first?.cells.last?.style, redStyle)
+    }
+
+    func testTerminalGridSelectionCopiesSelectedCellsAcrossRows() {
+        let snapshot = TerminalGridSnapshot(text: "A한\nBC", styledRuns: [])
+        let selection = TerminalGridSelection(
+            anchor: TerminalGridPosition(row: 0, column: 1),
+            focus: TerminalGridPosition(row: 1, column: 1)
+        )
+
+        XCTAssertTrue(selection.intersects(row: 0, column: 1, width: 2))
+        XCTAssertEqual(selection.selectedText(from: snapshot), "한\nB")
+    }
+
+    func testTerminalTypographyProvidesStableCellMetrics() {
+        let smallTypography = TerminalTypography.make(
+            appearance: TerminalAppearance(fontSize: TerminalAppearance.minimumFontSize)
+        )
+        let largeTypography = TerminalTypography.make(
+            appearance: TerminalAppearance(fontSize: TerminalAppearance.maximumFontSize)
+        )
+
+        XCTAssertGreaterThan(smallTypography.cellSize.width, 0)
+        XCTAssertGreaterThan(smallTypography.cellSize.height, 0)
+        XCTAssertGreaterThan(largeTypography.cellSize.width, smallTypography.cellSize.width)
+        XCTAssertEqual(smallTypography.textInsets, TerminalTypography.defaultTextInsets)
     }
 
     func testTerminalGridSizeEstimatorClampsAndUsesInsets() {
