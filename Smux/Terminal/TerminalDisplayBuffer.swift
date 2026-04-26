@@ -458,21 +458,42 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             return
         }
 
-        while text.count > maximumCharacterCount {
-            if lines.count > 1 {
-                lines.removeFirst()
-                cursorLineIndex = max(0, cursorLineIndex - 1)
-            } else if let removedCell = lines[0].first {
-                lines[0].removeFirst()
-                cursorColumn = max(0, cursorColumn - removedCell.width)
-            } else {
-                break
+        var characterCount = displayCharacterCount()
+        guard characterCount > maximumCharacterCount else {
+            return
+        }
+
+        var removedLineCount = 0
+        while characterCount > maximumCharacterCount,
+              lines.count - removedLineCount > 1 {
+            characterCount -= lines[removedLineCount].count + 1
+            removedLineCount += 1
+        }
+
+        if removedLineCount > 0 {
+            lines.removeFirst(removedLineCount)
+            cursorLineIndex = max(0, cursorLineIndex - removedLineCount)
+        }
+
+        if characterCount > maximumCharacterCount {
+            let removedCellCount = min(characterCount - maximumCharacterCount, lines[0].count)
+            let removedWidth = lines[0].prefix(removedCellCount).reduce(0) { width, cell in
+                width + cell.width
             }
+
+            lines[0].removeFirst(removedCellCount)
+            cursorColumn = max(0, cursorColumn - removedWidth)
         }
 
         ensureCursorLine()
         cursorLineIndex = min(cursorLineIndex, lines.count - 1)
         cursorColumn = min(cursorColumn, displayWidth(of: lines[cursorLineIndex]))
+    }
+
+    private func displayCharacterCount() -> Int {
+        lines.reduce(max(0, lines.count - 1)) { count, line in
+            count + line.count
+        }
     }
 
     private mutating func padCursorLine(to column: Int) {

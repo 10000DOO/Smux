@@ -43,7 +43,7 @@ Last updated: 2026-04-26
 | P0-2 | panel splitter size 조절 및 ratio 복원 | Implemented and verified |
 | P0-3 | terminal 호환성 고도화 | Implemented and verified |
 | P0-4 | Mermaid sample fixture와 offline render 검증 | Implemented and verified |
-| P0-5 | performance/memory measurement | No automated benchmark yet |
+| P0-5 | performance/memory measurement | Implemented and verified |
 | P1-1 | editor Markdown syntax highlight | Not started |
 | P1-2 | preview code syntax highlight | Language metadata exists, highlighter missing |
 | P1-3 | keyboard actions for new editor/preview panels | Terminal/split/focus shortcuts done, editor/preview shortcuts missing |
@@ -121,10 +121,10 @@ Suggested write set:
 
 ### P0-5. Performance And Memory Baseline
 
-- [ ] Add repeatable preview render timing test for large Markdown/Mermaid documents.
-- [ ] Add terminal output append/scrollback stress test.
-- [ ] Record initial memory/latency baseline in docs.
-- [ ] Identify high-cost loops and unnecessary duplicate render paths.
+- [x] Add repeatable preview render timing test for large Markdown/Mermaid documents.
+- [x] Add terminal output append/scrollback stress test.
+- [x] Record initial memory/latency baseline in docs.
+- [x] Identify high-cost loops and unnecessary duplicate render paths.
 
 Suggested write set:
 
@@ -199,4 +199,5 @@ editor/preview UI changes.
 - [x] Offline bundled official Mermaid renderer resource.
 - [x] Representative Mermaid fixture and offline preview HTML assertions.
 - [x] WebView-level offline Mermaid SVG render verification.
+- [x] Performance baseline tests and measurement documentation.
 - [x] Terminal-output based agent status detection and notification badges.

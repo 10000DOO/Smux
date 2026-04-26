@@ -192,6 +192,45 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "한글 prompt")
     }
 
+    func testScrollbackTruncationDropsWholeLeadingLines() {
+        var buffer = TerminalDisplayBuffer(maximumCharacterCount: 5)
+
+        buffer.append("one\ntwo\nthree")
+
+        XCTAssertEqual(buffer.text, "three")
+    }
+
+    func testScrollbackTruncationDropsLeadingCellsOnSingleLine() {
+        var buffer = TerminalDisplayBuffer(maximumCharacterCount: 3)
+
+        buffer.append("abcd")
+
+        XCTAssertEqual(buffer.text, "bcd")
+    }
+
+    func testScrollbackTruncationPreservesStyledRuns() {
+        var buffer = TerminalDisplayBuffer(maximumCharacterCount: 8)
+
+        buffer.append("plain\n\u{1B}[32mgreen\u{1B}[0m")
+
+        XCTAssertEqual(buffer.text, "green")
+        XCTAssertEqual(
+            buffer.styledRuns,
+            [
+                TerminalStyledTextRun(
+                    text: "green",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.green),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: false
+                    )
+                )
+            ]
+        )
+    }
+
     func testOutputBufferKeepsRawTextSeparateFromDisplayText() {
         var buffer = TerminalOutputBuffer()
 
