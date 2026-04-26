@@ -13,6 +13,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
+    @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     var commandRouter: AppCommandRouter
 
     var body: some View {
@@ -47,6 +48,7 @@ struct WorkspaceShellView: View {
                 documentTextStore: documentTextStore,
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,
+                terminalPreferencesStore: terminalPreferencesStore,
                 notifications: notificationStore.notifications,
                 onFocus: { panelStore.focus(panelID: $0) },
                 onReplaceSurface: { panelID, surface in

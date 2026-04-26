@@ -215,6 +215,45 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertTrue(NSFontManager.shared.traits(of: font).contains(.boldFontMask))
     }
 
+    func testAttributedRendererUsesThemeAdjustedANSIColors() throws {
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let darkAttributedText = TerminalAttributedTextRenderer.attributedString(
+            text: "black",
+            styledRuns: [
+                TerminalStyledTextRun(
+                    text: "black",
+                    style: TerminalTextStyle(foreground: .ansi(.black))
+                )
+            ],
+            font: font,
+            defaultForeground: .labelColor,
+            appearance: TerminalAppearance(theme: .dark)
+        )
+        let lightAttributedText = TerminalAttributedTextRenderer.attributedString(
+            text: "white",
+            styledRuns: [
+                TerminalStyledTextRun(
+                    text: "white",
+                    style: TerminalTextStyle(foreground: .ansi(.white))
+                )
+            ],
+            font: font,
+            defaultForeground: .labelColor,
+            appearance: TerminalAppearance(theme: .light)
+        )
+
+        let darkBlack = try colorComponent(
+            from: darkAttributedText,
+            attribute: .foregroundColor
+        )
+        let lightWhite = try colorComponent(
+            from: lightAttributedText,
+            attribute: .foregroundColor
+        )
+        XCTAssertGreaterThan(darkBlack.red, 0.2)
+        XCTAssertLessThan(lightWhite.red, 0.8)
+    }
+
     func testTerminalGridSizeEstimatorClampsAndUsesInsets() {
         let gridSize = TerminalGridSizeEstimator.estimate(
             size: CGSize(width: 96, height: 50),
@@ -229,6 +268,20 @@ final class TerminalViewModelTests: XCTestCase {
             TerminalGridSizeEstimator.estimate(size: .zero),
             TerminalGridSizeEstimator(columns: 1, rows: 1)
         )
+    }
+
+    func testTerminalGridSizeEstimatorScalesWithFontSize() {
+        let smallFontGridSize = TerminalGridSizeEstimator.estimate(
+            size: CGSize(width: 320, height: 180),
+            fontSize: TerminalAppearance.minimumFontSize
+        )
+        let largeFontGridSize = TerminalGridSizeEstimator.estimate(
+            size: CGSize(width: 320, height: 180),
+            fontSize: TerminalAppearance.maximumFontSize
+        )
+
+        XCTAssertGreaterThan(smallFontGridSize.columns, largeFontGridSize.columns)
+        XCTAssertGreaterThan(smallFontGridSize.rows, largeFontGridSize.rows)
     }
 
     func testSendInputAndResizeDelegateToTerminalCoreAndRefreshMetadata() {
@@ -285,6 +338,15 @@ final class TerminalViewModelTests: XCTestCase {
             exitCode: nil,
             failureMessage: failureMessage
         )
+    }
+
+    private func colorComponent(
+        from attributedText: NSAttributedString,
+        attribute: NSAttributedString.Key
+    ) throws -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
+        let color = try XCTUnwrap(attributedText.attribute(attribute, at: 0, effectiveRange: nil) as? NSColor)
+        let resolvedColor = try XCTUnwrap(color.usingColorSpace(.sRGB))
+        return (resolvedColor.redComponent, resolvedColor.greenComponent, resolvedColor.blueComponent)
     }
 }
 

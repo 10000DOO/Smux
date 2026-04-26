@@ -10,6 +10,7 @@ struct SplitPanelView: View {
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
+    @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     var notifications: [WorkspaceNotification] = []
     var onFocus: (PanelNode.ID) -> Void
     var onReplaceSurface: (PanelNode.ID, PanelSurfaceDescriptor) -> Void
@@ -109,6 +110,7 @@ struct SplitPanelView: View {
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             terminalOutputStore: terminalOutputStore,
+            terminalPreferencesStore: terminalPreferencesStore,
             notifications: notifications,
             onFocus: onFocus,
             onReplaceSurface: onReplaceSurface,
@@ -159,7 +161,8 @@ struct SplitPanelView: View {
                 TerminalPanelSurfaceView(
                     sessionID: sessionID,
                     terminalSessionController: terminalSessionController,
-                    terminalOutputStore: terminalOutputStore
+                    terminalOutputStore: terminalOutputStore,
+                    terminalPreferencesStore: terminalPreferencesStore
                 )
             case .editor(let documentID):
                 DocumentEditorPanelSurfaceView(
@@ -262,16 +265,20 @@ private struct TerminalPanelSurfaceView: View {
     var sessionID: TerminalSession.ID
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
+    @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     @StateObject private var viewModel: TerminalViewModel
+    @State private var lastResizedGridSize: TerminalGridSizeEstimator?
 
     init(
         sessionID: TerminalSession.ID,
         terminalSessionController: TerminalSessionController,
-        terminalOutputStore: TerminalOutputStore
+        terminalOutputStore: TerminalOutputStore,
+        terminalPreferencesStore: TerminalPreferencesStore
     ) {
         self.sessionID = sessionID
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore
+        self.terminalPreferencesStore = terminalPreferencesStore
         _viewModel = StateObject(
             wrappedValue: TerminalViewModel(
                 session: terminalSessionController.session(for: sessionID),
@@ -282,12 +289,26 @@ private struct TerminalPanelSurfaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TerminalPanelHeader(session: session)
+            TerminalPanelHeader(
+                session: session,
+                appearance: terminalPreferencesStore.appearance,
+                onThemeChange: { terminalPreferencesStore.theme = $0 },
+                onDecreaseFontSize: {
+                    terminalPreferencesStore.adjustFontSize(by: -TerminalAppearance.fontSizeStep)
+                },
+                onResetFontSize: {
+                    terminalPreferencesStore.resetFontSize()
+                },
+                onIncreaseFontSize: {
+                    terminalPreferencesStore.adjustFontSize(by: TerminalAppearance.fontSizeStep)
+                }
+            )
 
             GeometryReader { proxy in
                 TerminalViewRepresentable(
                     buffer: terminalOutputStore.output(for: sessionID),
                     styledRuns: terminalOutputStore.styledOutput(for: sessionID),
+                    appearance: terminalPreferencesStore.appearance,
                     onInput: viewModel.sendInput
                 )
                 .onAppear {
@@ -295,6 +316,9 @@ private struct TerminalPanelSurfaceView: View {
                 }
                 .onChange(of: proxy.size) { _, newSize in
                     resizeTerminal(to: newSize)
+                }
+                .onChange(of: terminalPreferencesStore.fontSize) {
+                    resizeTerminal(to: proxy.size)
                 }
             }
         }
@@ -316,13 +340,26 @@ private struct TerminalPanelSurfaceView: View {
     }
 
     private func resizeTerminal(to size: CGSize) {
-        let gridSize = TerminalGridSizeEstimator.estimate(size: size)
+        let gridSize = TerminalGridSizeEstimator.estimate(
+            size: size,
+            fontSize: terminalPreferencesStore.fontSize
+        )
+        guard lastResizedGridSize != gridSize else {
+            return
+        }
+
+        lastResizedGridSize = gridSize
         viewModel.resize(columns: gridSize.columns, rows: gridSize.rows)
     }
 }
 
 private struct TerminalPanelHeader: View {
     var session: TerminalSession?
+    var appearance: TerminalAppearance
+    var onThemeChange: (TerminalTheme) -> Void
+    var onDecreaseFontSize: () -> Void
+    var onResetFontSize: () -> Void
+    var onIncreaseFontSize: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -332,11 +369,74 @@ private struct TerminalPanelHeader: View {
             Spacer()
             Text(session?.status.rawValue.capitalized ?? "Missing")
                 .foregroundStyle(.secondary)
+            terminalThemeMenu
+            terminalFontControls
         }
         .font(.caption)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var terminalThemeMenu: some View {
+        Menu {
+            ForEach(TerminalTheme.allCases, id: \.self) { theme in
+                Button(theme.title) {
+                    onThemeChange(theme)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "paintbrush")
+                Text(appearance.theme.statusText)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Terminal theme")
+        .accessibilityLabel("Terminal theme")
+    }
+
+    private var terminalFontControls: some View {
+        HStack(spacing: 6) {
+            Button(action: onDecreaseFontSize) {
+                Image(systemName: "textformat.size.smaller")
+            }
+            .buttonStyle(.borderless)
+            .disabled(normalizedFontSize <= TerminalAppearance.minimumFontSize)
+            .help("Decrease terminal font size")
+            .accessibilityLabel("Decrease terminal font size")
+
+            Button(action: onResetFontSize) {
+                Text(fontSizeText)
+                    .monospacedDigit()
+                    .frame(minWidth: 34)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isDefaultFontSize)
+            .help("Reset terminal font size")
+            .accessibilityLabel("Reset terminal font size")
+
+            Button(action: onIncreaseFontSize) {
+                Image(systemName: "textformat.size.larger")
+            }
+            .buttonStyle(.borderless)
+            .disabled(normalizedFontSize >= TerminalAppearance.maximumFontSize)
+            .help("Increase terminal font size")
+            .accessibilityLabel("Increase terminal font size")
+        }
+    }
+
+    private var normalizedFontSize: Double {
+        TerminalAppearance.clampedFontSize(appearance.fontSize)
+    }
+
+    private var fontSizeText: String {
+        "\(Int(normalizedFontSize.rounded()))pt"
+    }
+
+    private var isDefaultFontSize: Bool {
+        abs(normalizedFontSize - TerminalAppearance.defaultFontSize) < 0.0001
     }
 }
 

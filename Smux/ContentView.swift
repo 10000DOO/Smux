@@ -28,6 +28,7 @@ struct ContentView: View {
             documentTextStore: appComposition.documentTextStore,
             terminalSessionController: appComposition.terminalSessionController,
             terminalOutputStore: appComposition.terminalOutputStore,
+            terminalPreferencesStore: appComposition.terminalPreferencesStore,
             commandRouter: appComposition.commandRouter
         )
         .toolbar {
@@ -63,6 +64,7 @@ private final class AppComposition: ObservableObject {
     let documentTextStore: DocumentTextStore
     let terminalSessionController: TerminalSessionController
     let terminalOutputStore: TerminalOutputStore
+    let terminalPreferencesStore: TerminalPreferencesStore
     let agentStateStore: AgentStateStore
     let agentTerminalOutputMonitor: AgentTerminalOutputMonitor
     let recentWorkspaceStore: RecentWorkspaceStore
@@ -83,6 +85,7 @@ private final class AppComposition: ObservableObject {
         let previewPreferencesStore = PreviewPreferencesStore()
         let documentTextStore = DocumentTextStore()
         let terminalOutputStore = TerminalOutputStore()
+        let terminalPreferencesStore = TerminalPreferencesStore()
         let agentStateStore = AgentStateStore()
         let agentTerminalOutputMonitor = AgentTerminalOutputMonitor(
             stateStore: agentStateStore,
@@ -124,6 +127,7 @@ private final class AppComposition: ObservableObject {
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore
+        self.terminalPreferencesStore = terminalPreferencesStore
         self.agentStateStore = agentStateStore
         self.agentTerminalOutputMonitor = agentTerminalOutputMonitor
         self.recentWorkspaceStore = recentWorkspaceStore
