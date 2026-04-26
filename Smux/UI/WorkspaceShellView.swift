@@ -9,6 +9,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
+    @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
@@ -42,6 +43,7 @@ struct WorkspaceShellView: View {
                 documentSessionStore: documentSessionStore,
                 documentFileWatchStore: documentFileWatchStore,
                 previewSessionStore: previewSessionStore,
+                previewPreferencesStore: previewPreferencesStore,
                 documentTextStore: documentTextStore,
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,

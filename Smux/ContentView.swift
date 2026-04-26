@@ -24,6 +24,7 @@ struct ContentView: View {
             documentSessionStore: appComposition.documentSessionStore,
             documentFileWatchStore: appComposition.documentFileWatchStore,
             previewSessionStore: appComposition.previewSessionStore,
+            previewPreferencesStore: appComposition.previewPreferencesStore,
             documentTextStore: appComposition.documentTextStore,
             terminalSessionController: appComposition.terminalSessionController,
             terminalOutputStore: appComposition.terminalOutputStore,
@@ -58,6 +59,7 @@ private final class AppComposition: ObservableObject {
     let documentSessionStore: DocumentSessionStore
     let documentFileWatchStore: DocumentFileWatchStore
     let previewSessionStore: PreviewSessionStore
+    let previewPreferencesStore: PreviewPreferencesStore
     let documentTextStore: DocumentTextStore
     let terminalSessionController: TerminalSessionController
     let terminalOutputStore: TerminalOutputStore
@@ -78,6 +80,7 @@ private final class AppComposition: ObservableObject {
         let documentSessionStore = DocumentSessionStore()
         let documentFileWatchStore = DocumentFileWatchStore()
         let previewSessionStore = PreviewSessionStore()
+        let previewPreferencesStore = PreviewPreferencesStore()
         let documentTextStore = DocumentTextStore()
         let terminalOutputStore = TerminalOutputStore()
         let agentStateStore = AgentStateStore()
@@ -117,6 +120,7 @@ private final class AppComposition: ObservableObject {
         self.documentSessionStore = documentSessionStore
         self.documentFileWatchStore = documentFileWatchStore
         self.previewSessionStore = previewSessionStore
+        self.previewPreferencesStore = previewPreferencesStore
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore

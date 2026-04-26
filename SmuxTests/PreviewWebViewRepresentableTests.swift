@@ -274,8 +274,106 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         )
         XCTAssertEqual(
             PreviewWebViewRepresentable.Coordinator.policy(for: .other, url: URL(string: "https://example.com/")),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .other, url: nil),
             .allow
         )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .other, url: URL(string: "about:blank")),
+            .allow
+        )
+    }
+
+    @MainActor
+    func testNavigationDecisionOpensExternalLinksWhenPolicyAllows() throws {
+        let httpsURL = try XCTUnwrap(URL(string: "https://example.com/path"))
+        let mailtoURL = try XCTUnwrap(URL(string: "mailto:hello@example.com"))
+        let fileURL = try XCTUnwrap(URL(string: "file:///tmp/readme.md"))
+        let missingHostURL = try XCTUnwrap(URL(string: "https:/missing-host"))
+        let emptyMailURL = try XCTUnwrap(URL(string: "mailto:"))
+
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .linkActivated,
+                url: httpsURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .openExternally(httpsURL)
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .linkActivated,
+                url: mailtoURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .openExternally(mailtoURL)
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .linkActivated,
+                url: fileURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .linkActivated,
+                url: missingHostURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .linkActivated,
+                url: emptyMailURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.decision(
+                for: .other,
+                url: httpsURL,
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(
+                for: .linkActivated,
+                url: URL(string: "https://example.com/"),
+                externalLinkPolicy: .openInDefaultBrowser
+            ),
+            .cancel
+        )
+    }
+
+    @MainActor
+    func testCoordinatorReportsExternalOpenResult() throws {
+        let url = try XCTUnwrap(URL(string: "https://example.com/"))
+        var openedURL: URL?
+        var result: (url: URL, didOpen: Bool)?
+        let coordinator = PreviewWebViewRepresentable.Coordinator(
+            externalLinkPolicy: .openInDefaultBrowser,
+            openExternalURL: { url in
+                openedURL = url
+                return false
+            },
+            onExternalURLOpenResult: { url, didOpen in
+                result = (url, didOpen)
+            }
+        )
+
+        let policy = coordinator.resolve(.openExternally(url))
+
+        XCTAssertEqual(policy, .cancel)
+        XCTAssertEqual(openedURL, url)
+        XCTAssertEqual(result?.url, url)
+        XCTAssertEqual(result?.didOpen, false)
     }
 
     @MainActor

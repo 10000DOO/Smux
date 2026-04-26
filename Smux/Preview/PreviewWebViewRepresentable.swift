@@ -6,9 +6,18 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
     typealias NSViewType = WKWebView
 
     var state: PreviewState?
+    var externalLinkPolicy: PreviewExternalLinkPolicy = .block
+    var openExternalURL: (URL) -> Bool = { url in
+        NSWorkspace.shared.open(url)
+    }
+    var onExternalURLOpenResult: (URL, Bool) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(
+            externalLinkPolicy: externalLinkPolicy,
+            openExternalURL: openExternalURL,
+            onExternalURLOpenResult: onExternalURLOpenResult
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -22,6 +31,10 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.externalLinkPolicy = externalLinkPolicy
+        context.coordinator.openExternalURL = openExternalURL
+        context.coordinator.onExternalURLOpenResult = onExternalURLOpenResult
+
         let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
 
         guard context.coordinator.lastHTML != html else {
@@ -34,21 +47,90 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var lastHTML: String?
+        var externalLinkPolicy: PreviewExternalLinkPolicy
+        var openExternalURL: (URL) -> Bool
+        var onExternalURLOpenResult: (URL, Bool) -> Void
+
+        init(
+            externalLinkPolicy: PreviewExternalLinkPolicy = .block,
+            openExternalURL: @escaping (URL) -> Bool = { _ in false },
+            onExternalURLOpenResult: @escaping (URL, Bool) -> Void = { _, _ in }
+        ) {
+            self.externalLinkPolicy = externalLinkPolicy
+            self.openExternalURL = openExternalURL
+            self.onExternalURLOpenResult = onExternalURLOpenResult
+        }
 
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
-            decisionHandler(Self.policy(for: navigationAction.navigationType, url: navigationAction.request.url))
+            let decision = Self.decision(
+                for: navigationAction.navigationType,
+                url: navigationAction.request.url,
+                externalLinkPolicy: externalLinkPolicy
+            )
+
+            decisionHandler(resolve(decision))
         }
 
-        static func policy(for navigationType: WKNavigationType, url: URL?) -> WKNavigationActionPolicy {
-            guard navigationType == .linkActivated else {
-                return .allow
+        func resolve(_ decision: PreviewNavigationDecision) -> WKNavigationActionPolicy {
+            if case let .openExternally(url) = decision {
+                let didOpen = openExternalURL(url)
+                onExternalURLOpenResult(url, didOpen)
             }
 
-            return isInternalAnchorURL(url) ? .allow : .cancel
+            return decision.navigationActionPolicy
+        }
+
+        static func policy(
+            for navigationType: WKNavigationType,
+            url: URL?,
+            externalLinkPolicy: PreviewExternalLinkPolicy = .block
+        ) -> WKNavigationActionPolicy {
+            decision(
+                for: navigationType,
+                url: url,
+                externalLinkPolicy: externalLinkPolicy
+            )
+            .navigationActionPolicy
+        }
+
+        static func decision(
+            for navigationType: WKNavigationType,
+            url: URL?,
+            externalLinkPolicy: PreviewExternalLinkPolicy
+        ) -> PreviewNavigationDecision {
+            if isPreviewDocumentURL(url) || isInternalAnchorURL(url) {
+                return .allowInWebView
+            }
+
+            guard navigationType == .linkActivated else {
+                return .cancel
+            }
+
+            guard let url, isExternallyOpenableURL(url) else {
+                return .cancel
+            }
+
+            switch externalLinkPolicy {
+            case .block:
+                return .cancel
+            case .openInDefaultBrowser:
+                return .openExternally(url)
+            }
+        }
+
+        private static func isPreviewDocumentURL(_ url: URL?) -> Bool {
+            guard let url else {
+                return true
+            }
+
+            return url.scheme == "about"
+                && url.host == nil
+                && url.path == "blank"
+                && url.fragment == nil
         }
 
         private static func isInternalAnchorURL(_ url: URL?) -> Bool {
@@ -61,6 +143,39 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
             }
 
             return url.scheme == "about" && url.host == nil && url.path == "blank"
+        }
+
+        private static func isExternallyOpenableURL(_ url: URL) -> Bool {
+            guard
+                let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                let scheme = components.scheme?.lowercased()
+            else {
+                return false
+            }
+
+            switch scheme {
+            case "http", "https":
+                return components.host?.isEmpty == false
+            case "mailto":
+                return !components.path.isEmpty
+            default:
+                return false
+            }
+        }
+    }
+}
+
+nonisolated enum PreviewNavigationDecision: Equatable {
+    case allowInWebView
+    case cancel
+    case openExternally(URL)
+
+    var navigationActionPolicy: WKNavigationActionPolicy {
+        switch self {
+        case .allowInWebView:
+            return .allow
+        case .cancel, .openExternally:
+            return .cancel
         }
     }
 }

@@ -27,6 +27,8 @@ Last updated: 2026-04-26
   pipeline에 합류시키는 hook adapter와 cross-source duplicate suppression이 구현됨.
 - Preview header zoom controls, persisted preview zoom state, Mermaid diagram zoom controls,
   and drag-to-pan diagram surfaces are implemented.
+- User-controllable preview external link policy, persisted preference storage, and default
+  external-link blocking are implemented.
 - 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
   WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
@@ -59,7 +61,7 @@ Last updated: 2026-04-26
 | P1-4 | vertical tab status/last notification polish | Implemented and verified |
 | P1-5 | cmux/hook parity for agent detection | Implemented and verified |
 | P1-6 | Mermaid zoom/pan controls | Implemented and verified |
-| P2-1 | external link opening policy UI | Policy hard-blocks external links now |
+| P2-1 | external link opening policy UI | Implemented and verified |
 | P2-2 | terminal theme/font settings | Basic system mono style only |
 | Future | notarization/release automation/open-source prep | Deferred by PRD |
 
@@ -152,7 +154,7 @@ Suggested write set:
 
 ## P2 Checklist
 
-- [ ] User-controllable external link open policy.
+- [x] User-controllable external link open policy.
 - [ ] Terminal font/theme settings.
 - [ ] Most recent notification keyboard action.
 - [ ] Release/notarization automation after feature completion.
@@ -163,10 +165,9 @@ The next work should run in slices. Parallel work is allowed only when write set
 
 ### Current Best Sequence
 
-1. P2 external link opening policy UI.
-2. P2 terminal font/theme settings.
-3. P2 most recent notification keyboard action.
-4. Release/notarization automation after feature completion.
+1. P2 terminal font/theme settings.
+2. P2 most recent notification keyboard action.
+3. Release/notarization automation after feature completion.
 
 ### Safe Parallel Groups
 
@@ -215,3 +216,4 @@ editor/preview UI changes.
 - [x] Left rail notification summary and latest agent status presentation.
 - [x] Agent hook payload adapter and cross-source duplicate notification suppression.
 - [x] Mermaid zoom/pan controls and persisted preview zoom state.
+- [x] Preview external link policy UI and persisted preference.

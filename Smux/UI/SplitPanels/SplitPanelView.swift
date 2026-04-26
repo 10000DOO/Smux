@@ -6,6 +6,7 @@ struct SplitPanelView: View {
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
+    @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
@@ -104,6 +105,7 @@ struct SplitPanelView: View {
             documentSessionStore: documentSessionStore,
             documentFileWatchStore: documentFileWatchStore,
             previewSessionStore: previewSessionStore,
+            previewPreferencesStore: previewPreferencesStore,
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             terminalOutputStore: terminalOutputStore,
@@ -173,6 +175,7 @@ struct SplitPanelView: View {
                     previewID: previewID,
                     documentSessionStore: documentSessionStore,
                     previewSessionStore: previewSessionStore,
+                    previewPreferencesStore: previewPreferencesStore,
                     documentTextStore: documentTextStore
                 )
             case .empty:
@@ -684,8 +687,10 @@ private struct PreviewPanelSurfaceView: View {
     var previewID: PreviewState.ID
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
+    @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @State private var errorMessage: String?
+    @State private var externalLinkMessage: String?
     @State private var pipeline = MarkdownPreviewPipeline()
     @State private var fileIO = FileBackedDocumentFileIO()
 
@@ -694,12 +699,21 @@ private struct PreviewPanelSurfaceView: View {
             PreviewPanelHeader(
                 session: sourceSession,
                 zoom: previewSessionStore.state(for: previewID)?.zoom ?? PreviewState.defaultZoom,
+                externalLinkPolicy: previewPreferencesStore.externalLinkPolicy,
                 errorMessage: errorMessage,
+                externalLinkMessage: externalLinkMessage,
                 onZoomOut: { updateZoom(by: -PreviewState.zoomStep) },
                 onResetZoom: { previewSessionStore.updateZoom(for: previewID, to: PreviewState.defaultZoom) },
-                onZoomIn: { updateZoom(by: PreviewState.zoomStep) }
+                onZoomIn: { updateZoom(by: PreviewState.zoomStep) },
+                onExternalLinkPolicyChange: { previewPreferencesStore.externalLinkPolicy = $0 }
             )
-            PreviewWebViewRepresentable(state: previewSessionStore.state(for: previewID))
+            PreviewWebViewRepresentable(
+                state: previewSessionStore.state(for: previewID),
+                externalLinkPolicy: previewPreferencesStore.externalLinkPolicy,
+                onExternalURLOpenResult: { _, didOpen in
+                    externalLinkMessage = didOpen ? nil : "Link open failed"
+                }
+            )
         }
         .background(Color(nsColor: .textBackgroundColor))
         .task(id: renderToken) {
@@ -785,10 +799,13 @@ private struct PreviewPanelSurfaceView: View {
 private struct PreviewPanelHeader: View {
     var session: DocumentSession?
     var zoom: Double
+    var externalLinkPolicy: PreviewExternalLinkPolicy
     var errorMessage: String?
+    var externalLinkMessage: String?
     var onZoomOut: () -> Void
     var onResetZoom: () -> Void
     var onZoomIn: () -> Void
+    var onExternalLinkPolicyChange: (PreviewExternalLinkPolicy) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -800,6 +817,12 @@ private struct PreviewPanelHeader: View {
                 Text("Unavailable")
                     .foregroundStyle(.secondary)
             }
+            if let externalLinkMessage {
+                Text(externalLinkMessage)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            externalLinkPolicyMenu
             previewZoomControls
         }
         .font(.caption)
@@ -836,6 +859,25 @@ private struct PreviewPanelHeader: View {
             .help("Zoom in preview")
             .accessibilityLabel("Zoom in preview")
         }
+    }
+
+    private var externalLinkPolicyMenu: some View {
+        Menu {
+            ForEach(PreviewExternalLinkPolicy.allCases, id: \.self) { policy in
+                Button(policy.title) {
+                    onExternalLinkPolicyChange(policy)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "link")
+                Text(externalLinkPolicy.statusText)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("External link policy")
+        .accessibilityLabel("External link policy")
     }
 
     private var normalizedZoom: Double {
