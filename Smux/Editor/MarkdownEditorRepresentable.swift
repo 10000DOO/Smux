@@ -136,6 +136,7 @@ struct MarkdownEditorRepresentable: NSViewRepresentable {
                     isApplyingExternalText = false
                 }
                 textView.string = text
+                MarkdownEditorSyntaxHighlighter.applyHighlighting(to: textView)
                 textView.setSelectedRange(rangeToRestore)
                 return
             }
@@ -165,6 +166,7 @@ struct MarkdownEditorRepresentable: NSViewRepresentable {
             }
 
             onTextChange(textView.string)
+            MarkdownEditorSyntaxHighlighter.applyHighlighting(to: textView)
             onSelectionChange(textView.selectedRange())
         }
 

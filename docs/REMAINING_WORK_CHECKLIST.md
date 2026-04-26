@@ -44,7 +44,7 @@ Last updated: 2026-04-26
 | P0-3 | terminal 호환성 고도화 | Implemented and verified |
 | P0-4 | Mermaid sample fixture와 offline render 검증 | Implemented and verified |
 | P0-5 | performance/memory measurement | Implemented and verified |
-| P1-1 | editor Markdown syntax highlight | Not started |
+| P1-1 | editor Markdown syntax highlight | Implemented and verified |
 | P1-2 | preview code syntax highlight | Language metadata exists, highlighter missing |
 | P1-3 | keyboard actions for new editor/preview panels | Terminal/split/focus shortcuts done, editor/preview shortcuts missing |
 | P1-4 | vertical tab status/last notification polish | Basic rail/badges done, richer status missing |
@@ -133,7 +133,7 @@ Suggested write set:
 
 ## P1 Checklist
 
-- [ ] Editor Markdown syntax highlight in `MarkdownEditorRepresentable`.
+- [x] Editor Markdown syntax highlight in `MarkdownEditorRepresentable`.
 - [ ] Preview code block syntax highlighting without network dependency.
 - [ ] Keyboard action to open a new editor panel for selected Markdown/Mermaid file.
 - [ ] Keyboard action to open a new preview panel for selected Markdown/Mermaid file.
@@ -200,4 +200,5 @@ editor/preview UI changes.
 - [x] Representative Mermaid fixture and offline preview HTML assertions.
 - [x] WebView-level offline Mermaid SVG render verification.
 - [x] Performance baseline tests and measurement documentation.
+- [x] Editor Markdown syntax highlighting.
 - [x] Terminal-output based agent status detection and notification badges.
