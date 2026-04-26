@@ -3,9 +3,10 @@ import SwiftUI
 struct PanelSurfacePlaceholderView: View {
     var surface: PanelSurfaceDescriptor
     var isFocused: Bool
-    var onReplaceSurface: (PanelSurfaceDescriptor) -> Void
+    var selectedDocumentURL: URL?
     var onSplit: (SplitDirection) -> Void
     var onCreateTerminal: () -> Void = {}
+    var onOpenSelectedDocument: (DocumentOpenMode) -> Void = { _ in }
 
     var body: some View {
         let presentation = PanelSurfacePresentation(surface: surface)
@@ -37,6 +38,20 @@ struct PanelSurfacePlaceholderView: View {
                 } label: {
                     Label("Terminal", systemImage: "terminal")
                 }
+
+                Button {
+                    onOpenSelectedDocument(.editor)
+                } label: {
+                    Label("Editor", systemImage: "doc.text")
+                }
+                .disabled(selectedDocumentURL == nil)
+
+                Button {
+                    onOpenSelectedDocument(.preview)
+                } label: {
+                    Label("Preview", systemImage: "eye")
+                }
+                .disabled(selectedDocumentURL == nil)
             }
 
             HStack(spacing: 8) {

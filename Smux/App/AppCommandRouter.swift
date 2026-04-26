@@ -31,6 +31,22 @@ struct AppCommandRouter {
         try await documentOpening.openDocument(url, preferredSurface: preferredSurface)
     }
 
+    func openDocument(
+        _ url: URL,
+        preferredSurface: DocumentOpenMode,
+        replacingPanel panelID: PanelNode.ID?
+    ) async throws {
+        guard let documentOpening else {
+            throw AppCommandRouterError.missingDocumentOpening
+        }
+
+        try await documentOpening.openDocument(
+            url,
+            preferredSurface: preferredSurface,
+            replacingPanel: panelID
+        )
+    }
+
     func openDocumentInNewPanel(
         _ url: URL,
         preferredSurface: DocumentOpenMode,
@@ -63,8 +79,24 @@ struct AppCommandRouter {
         try await terminalCommanding.createTerminal(in: workspaceID, replacingPanel: Optional(panelID))
     }
 
+    func focus(panelID: PanelNode.ID?) {
+        panelCommanding?.focus(panelID: panelID)
+    }
+
+    func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
+        panelCommanding?.createPanel(splitDirection: splitDirection, surface: surface)
+    }
+
+    func splitPanel(panelID: PanelNode.ID, direction: SplitDirection, surface: PanelSurfaceDescriptor) {
+        panelCommanding?.splitPanel(panelID: panelID, direction: direction, surface: surface)
+    }
+
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
         panelCommanding?.splitFocusedPanel(direction: direction, surface: surface)
+    }
+
+    func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {
+        panelCommanding?.updateSplitRatio(splitID: splitID, ratio: ratio)
     }
 
     func focusNextPanel() {

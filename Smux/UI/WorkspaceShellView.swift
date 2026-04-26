@@ -41,6 +41,7 @@ struct WorkspaceShellView: View {
             SplitPanelView(
                 node: panelStore.rootNode,
                 focusedPanelID: panelStore.focusedPanelID,
+                selectedDocumentURL: fileTreeStore.selectedDocumentCandidateURL,
                 documentSessionStore: documentSessionStore,
                 documentFileWatchStore: documentFileWatchStore,
                 previewSessionStore: previewSessionStore,
@@ -50,16 +51,16 @@ struct WorkspaceShellView: View {
                 terminalOutputStore: terminalOutputStore,
                 terminalPreferencesStore: terminalPreferencesStore,
                 notifications: notificationStore.notifications,
-                onFocus: { panelStore.focus(panelID: $0) },
-                onReplaceSurface: { panelID, surface in
-                    panelStore.replacePanel(panelID: panelID, with: surface)
-                },
+                onFocus: { commandRouter.focus(panelID: $0) },
                 onSplit: { panelID, direction in
-                    panelStore.splitPanel(panelID: panelID, direction: direction, surface: .empty)
+                    commandRouter.splitPanel(panelID: panelID, direction: direction, surface: .empty)
                 },
                 onCreateTerminal: createTerminal,
+                onOpenSelectedDocument: { panelID, preferredSurface in
+                    openSelectedDocument(in: panelID, preferredSurface: preferredSurface)
+                },
                 onUpdateSplitRatio: { splitID, ratio in
-                    panelStore.updateSplitRatio(splitID: splitID, ratio: ratio)
+                    commandRouter.updateSplitRatio(splitID: splitID, ratio: ratio)
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -133,6 +134,11 @@ private struct WorkspaceCommandShortcutLayer: View {
                 commandRouter.splitFocusedPanel(direction: .horizontal, surface: .empty)
             }
             .keyboardShortcut("\\", modifiers: [.command, .shift])
+
+            shortcutButton("New Panel") {
+                commandRouter.createPanel(splitDirection: .horizontal, surface: .empty)
+            }
+            .keyboardShortcut("t", modifiers: [.command])
 
             shortcutButton("Create Terminal") {
                 createTerminal()
@@ -273,7 +279,7 @@ private extension WorkspaceShellView {
         }
 
         if let panelID = notification.routing.panelID {
-            panelStore.focus(panelID: panelID)
+            commandRouter.focus(panelID: panelID)
         }
         notificationStore.acknowledge(id: notificationID)
     }
@@ -303,6 +309,10 @@ private extension WorkspaceShellView {
         case .directory:
             expandFileTreeNode(nodeID)
         case .file:
+            if panelStore.focusedSurface == .empty {
+                return
+            }
+
             Task { @MainActor in
                 do {
                     try await commandRouter.openDocument(node.url, preferredSurface: .split)
@@ -324,6 +334,25 @@ private extension WorkspaceShellView {
                 try await commandRouter.createTerminal(in: workspaceID, replacingPanel: panelID)
             } catch {
                 workspaceStore.openErrorMessage = "Failed to create terminal: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func openSelectedDocument(in panelID: PanelNode.ID, preferredSurface: DocumentOpenMode) {
+        guard let selectedDocumentURL = fileTreeStore.selectedDocumentCandidateURL else {
+            workspaceStore.openErrorMessage = "Select a Markdown or Mermaid file first."
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await commandRouter.openDocument(
+                    selectedDocumentURL,
+                    preferredSurface: preferredSurface,
+                    replacingPanel: panelID
+                )
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to open document: \(error.localizedDescription)"
             }
         }
     }

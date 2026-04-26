@@ -123,16 +123,20 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         }
     }
 
-    func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
+    func openDocument(
+        _ url: URL,
+        preferredSurface: DocumentOpenMode,
+        replacingPanel panelID: PanelNode.ID?
+    ) async throws {
         let documentID = try createDocumentSession(for: url)
 
         switch preferredSurface {
         case .editor:
-            panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
+            replacePanel(with: .editor(documentID: documentID), preferredPanelID: panelID)
         case .preview:
-            panelStore?.replaceFocusedPanel(with: createPreviewSurface(sourceDocumentID: documentID))
+            replacePanel(with: createPreviewSurface(sourceDocumentID: documentID), preferredPanelID: panelID)
         case .split:
-            panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
+            replacePanel(with: .editor(documentID: documentID), preferredPanelID: panelID)
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
                 surface: createPreviewSurface(sourceDocumentID: documentID)
@@ -149,14 +153,11 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
 
         switch preferredSurface {
         case .editor:
-            panelStore?.splitFocusedPanel(direction: splitDirection, surface: .editor(documentID: documentID))
+            createPanel(splitDirection: splitDirection, surface: .editor(documentID: documentID))
         case .preview:
-            panelStore?.splitFocusedPanel(
-                direction: splitDirection,
-                surface: createPreviewSurface(sourceDocumentID: documentID)
-            )
+            createPanel(splitDirection: splitDirection, surface: createPreviewSurface(sourceDocumentID: documentID))
         case .split:
-            panelStore?.splitFocusedPanel(direction: splitDirection, surface: .editor(documentID: documentID))
+            createPanel(splitDirection: splitDirection, surface: .editor(documentID: documentID))
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
                 surface: createPreviewSurface(sourceDocumentID: documentID)

@@ -24,6 +24,14 @@ final class PanelStore: ObservableObject, PanelCommanding {
         focusedPanelID = panelID
     }
 
+    func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
+        splitFocusedPanel(direction: splitDirection, surface: surface)
+    }
+
+    var focusedSurface: PanelSurfaceDescriptor? {
+        rootNode.surface(forLeaf: focusedPanelID)
+    }
+
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
         guard let targetPanelID = focusedPanelID ?? rootNode.firstLeafID else {
             return

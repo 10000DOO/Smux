@@ -124,6 +124,18 @@ extension PanelNode {
         return children.contains { $0.containsLeaf(panelID: panelID) }
     }
 
+    func surface(forLeaf panelID: ID?) -> PanelSurfaceDescriptor? {
+        guard let panelID else {
+            return nil
+        }
+
+        if id == panelID, isLeaf {
+            return surface
+        }
+
+        return children.lazy.compactMap { $0.surface(forLeaf: panelID) }.first
+    }
+
     func replacingSurface(panelID: ID, with surface: PanelSurfaceDescriptor) -> PanelNode {
         guard id != panelID || isLeaf else {
             return self

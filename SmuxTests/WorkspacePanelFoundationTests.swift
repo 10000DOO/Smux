@@ -54,6 +54,46 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(nested.firstLeafID, firstPanelID)
     }
 
+    func testPanelNodeFindsSurfaceForLeafOnly() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let splitID = UUID()
+        let documentID = UUID()
+        let tree = PanelNode.split(
+            id: splitID,
+            direction: .horizontal,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
+        )
+
+        XCTAssertEqual(tree.surface(forLeaf: firstPanelID), .empty)
+        XCTAssertEqual(tree.surface(forLeaf: secondPanelID), .editor(documentID: documentID))
+        XCTAssertNil(tree.surface(forLeaf: splitID))
+        XCTAssertNil(tree.surface(forLeaf: nil))
+        XCTAssertNil(tree.surface(forLeaf: UUID()))
+    }
+
+    @MainActor
+    func testPanelStoreExposesFocusedSurface() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let documentID = UUID()
+        let store = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: firstPanelID, surface: .empty),
+                second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
+            ),
+            focusedPanelID: firstPanelID
+        )
+
+        XCTAssertEqual(store.focusedSurface, .empty)
+
+        store.focus(panelID: secondPanelID)
+
+        XCTAssertEqual(store.focusedSurface, .editor(documentID: documentID))
+    }
+
     func testPanelNodeFactoryClampsLowRatioAndLimitsSplitChildren() {
         let first = PanelNode.leaf(surface: .empty)
         let second = PanelNode.leaf(surface: .empty)
@@ -892,6 +932,50 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorOpenDocumentReplacesRequestedPanel() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/RequestedDocumentPanelWorkspace")
+        )
+        let documentURL = workspace.rootURL.appendingPathComponent("README.md")
+        let firstPanelID = PanelNode.ID()
+        let secondPanelID = PanelNode.ID()
+        let panelStore = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: firstPanelID, surface: .empty),
+                second: .leaf(id: secondPanelID, surface: .empty)
+            ),
+            focusedPanelID: firstPanelID
+        )
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            documentSessionStore: documentSessionStore,
+            previewSessionStore: previewSessionStore
+        )
+
+        try await coordinator.openDocument(
+            documentURL,
+            preferredSurface: .preview,
+            replacingPanel: secondPanelID
+        )
+
+        XCTAssertEqual(panelStore.rootNode.children.first?.surface, .empty)
+        guard case let .preview(previewID) = panelStore.rootNode.children.last?.surface,
+              let documentID = previewSessionStore.sourceDocumentID(for: previewID)
+        else {
+            XCTFail("Expected requested panel to become a preview.")
+            return
+        }
+
+        XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
+        XCTAssertEqual(documentSessionStore.session(for: documentID)?.url, documentURL)
+    }
+
+    @MainActor
     func testPreviewSessionStorePreservesZoomAcrossRenderUpdates() {
         let store = PreviewSessionStore()
         let previewID = PreviewState.ID()
@@ -1145,6 +1229,35 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorPanelCommandsForwardToPanelStore() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let panelStore = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: firstPanelID, surface: .empty),
+                second: .leaf(id: secondPanelID, surface: .empty)
+            ),
+            focusedPanelID: firstPanelID
+        )
+        let coordinator = WorkspaceCoordinator(panelStore: panelStore)
+
+        coordinator.focus(panelID: secondPanelID)
+        coordinator.createPanel(splitDirection: .vertical, surface: .empty)
+        coordinator.updateSplitRatio(splitID: panelStore.rootNode.children.last?.id ?? UUID(), ratio: 0.7)
+
+        XCTAssertEqual(panelStore.rootNode.children.first?.id, firstPanelID)
+        XCTAssertEqual(panelStore.rootNode.children.last?.kind, .split)
+        XCTAssertEqual(panelStore.rootNode.children.last?.direction, .vertical)
+        XCTAssertEqual(panelStore.rootNode.children.last?.children.first?.id, secondPanelID)
+        XCTAssertEqual(
+            panelStore.focusedPanelID,
+            panelStore.rootNode.children.last?.children.last?.id
+        )
+        XCTAssertEqual(panelStore.rootNode.children.last?.ratio, 0.7)
+    }
+
+    @MainActor
     func testAppCommandRouterForwardsCommands() async throws {
         let handler = RecordingCommandHandler()
         let router = AppCommandRouter(
@@ -1163,6 +1276,11 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         try await router.openWorkspace(rootURL: rootURL)
         try await router.closeWorkspace(id: closedWorkspaceID)
         try await router.openDocument(documentURL, preferredSurface: .split)
+        try await router.openDocument(
+            documentURL,
+            preferredSurface: .editor,
+            replacingPanel: panelID
+        )
         try await router.openDocumentInNewPanel(
             documentURL,
             preferredSurface: .preview,
@@ -1170,19 +1288,32 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         try await router.createTerminal(in: workspaceID)
         try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
+        router.focus(panelID: panelID)
+        router.createPanel(splitDirection: .horizontal, surface: splitSurface)
+        router.splitPanel(panelID: panelID, direction: .vertical, surface: splitSurface)
         router.splitFocusedPanel(direction: .vertical, surface: splitSurface)
+        router.updateSplitRatio(splitID: panelID, ratio: 0.64)
         router.focusNextPanel()
         router.focusPreviousPanel()
 
         XCTAssertEqual(handler.openedRootURL, rootURL)
         XCTAssertEqual(handler.closedWorkspaceID, closedWorkspaceID)
         XCTAssertEqual(handler.openedDocumentURL, documentURL)
-        XCTAssertEqual(handler.openedDocumentModes, [.split, .preview])
+        XCTAssertEqual(handler.openedDocumentModes, [.split, .editor, .preview])
+        XCTAssertEqual(handler.openedDocumentPanelIDs, [nil, panelID, nil])
         XCTAssertEqual(handler.openedDocumentSplitDirection, .horizontal)
         XCTAssertEqual(handler.terminalWorkspaceID, workspaceID)
         XCTAssertEqual(handler.terminalPanelID, panelID)
-        XCTAssertEqual(handler.splitDirection, .vertical)
-        XCTAssertEqual(handler.splitSurface, splitSurface)
+        XCTAssertEqual(handler.focusedPanelID, panelID)
+        XCTAssertEqual(handler.createdPanelDirection, .horizontal)
+        XCTAssertEqual(handler.createdPanelSurface, splitSurface)
+        XCTAssertEqual(handler.splitPanelID, panelID)
+        XCTAssertEqual(handler.splitPanelDirection, .vertical)
+        XCTAssertEqual(handler.splitPanelSurface, splitSurface)
+        XCTAssertEqual(handler.focusedSplitDirection, .vertical)
+        XCTAssertEqual(handler.focusedSplitSurface, splitSurface)
+        XCTAssertEqual(handler.updatedSplitID, panelID)
+        XCTAssertEqual(handler.updatedSplitRatio, 0.64)
         XCTAssertEqual(handler.focusNextCount, 1)
         XCTAssertEqual(handler.focusPreviousCount, 1)
     }
@@ -1221,6 +1352,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         }
 
         do {
+            try await router.openDocument(
+                documentURL,
+                preferredSurface: .preview,
+                replacingPanel: PanelNode.ID()
+            )
+            XCTFail("Expected missing document handler error.")
+        } catch let error as AppCommandRouterError {
+            XCTAssertEqual(error, .missingDocumentOpening)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        do {
             try await router.openDocumentInNewPanel(
                 documentURL,
                 preferredSurface: .preview,
@@ -1242,7 +1386,11 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
 
+        router.focus(panelID: PanelNode.ID())
+        router.createPanel(splitDirection: .horizontal, surface: .empty)
+        router.splitPanel(panelID: PanelNode.ID(), direction: .vertical, surface: .empty)
         router.splitFocusedPanel(direction: .horizontal, surface: .empty)
+        router.updateSplitRatio(splitID: PanelNode.ID(), ratio: 0.5)
         router.focusNextPanel()
         router.focusPreviousPanel()
     }
@@ -1351,11 +1499,20 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var closedWorkspaceID: Workspace.ID?
         var openedDocumentURL: URL?
         var openedDocumentModes: [DocumentOpenMode] = []
+        var openedDocumentPanelIDs: [PanelNode.ID?] = []
         var openedDocumentSplitDirection: SplitDirection?
         var terminalWorkspaceID: Workspace.ID?
         var terminalPanelID: PanelNode.ID?
-        var splitDirection: SplitDirection?
-        var splitSurface: PanelSurfaceDescriptor?
+        var focusedPanelID: PanelNode.ID?
+        var createdPanelDirection: SplitDirection?
+        var createdPanelSurface: PanelSurfaceDescriptor?
+        var splitPanelID: PanelNode.ID?
+        var splitPanelDirection: SplitDirection?
+        var splitPanelSurface: PanelSurfaceDescriptor?
+        var focusedSplitDirection: SplitDirection?
+        var focusedSplitSurface: PanelSurfaceDescriptor?
+        var updatedSplitID: PanelNode.ID?
+        var updatedSplitRatio: Double?
         var focusNextCount = 0
         var focusPreviousCount = 0
 
@@ -1367,9 +1524,14 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             closedWorkspaceID = id
         }
 
-        func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
+        func openDocument(
+            _ url: URL,
+            preferredSurface: DocumentOpenMode,
+            replacingPanel panelID: PanelNode.ID?
+        ) async throws {
             openedDocumentURL = url
             openedDocumentModes.append(preferredSurface)
+            openedDocumentPanelIDs.append(panelID)
         }
 
         func openDocumentInNewPanel(
@@ -1379,6 +1541,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         ) async throws {
             openedDocumentURL = url
             openedDocumentModes.append(preferredSurface)
+            openedDocumentPanelIDs.append(nil)
             openedDocumentSplitDirection = splitDirection
         }
 
@@ -1396,9 +1559,29 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             terminalPanelID = panelID
         }
 
+        func focus(panelID: PanelNode.ID?) {
+            focusedPanelID = panelID
+        }
+
+        func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
+            createdPanelDirection = splitDirection
+            createdPanelSurface = surface
+        }
+
+        func splitPanel(panelID: PanelNode.ID, direction: SplitDirection, surface: PanelSurfaceDescriptor) {
+            splitPanelID = panelID
+            splitPanelDirection = direction
+            splitPanelSurface = surface
+        }
+
         func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
-            splitDirection = direction
-            splitSurface = surface
+            focusedSplitDirection = direction
+            focusedSplitSurface = surface
+        }
+
+        func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {
+            updatedSplitID = splitID
+            updatedSplitRatio = ratio
         }
 
         func focusNextPanel() {

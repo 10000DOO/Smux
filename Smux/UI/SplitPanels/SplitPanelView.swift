@@ -3,6 +3,7 @@ import SwiftUI
 struct SplitPanelView: View {
     var node: PanelNode
     var focusedPanelID: PanelNode.ID?
+    var selectedDocumentURL: URL?
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
@@ -13,9 +14,9 @@ struct SplitPanelView: View {
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     var notifications: [WorkspaceNotification] = []
     var onFocus: (PanelNode.ID) -> Void
-    var onReplaceSurface: (PanelNode.ID, PanelSurfaceDescriptor) -> Void
     var onSplit: (PanelNode.ID, SplitDirection) -> Void
     var onCreateTerminal: (PanelNode.ID) -> Void
+    var onOpenSelectedDocument: (PanelNode.ID, DocumentOpenMode) -> Void
     var onUpdateSplitRatio: (PanelNode.ID, Double) -> Void
     @State private var dragStartRatio: Double?
 
@@ -103,6 +104,7 @@ struct SplitPanelView: View {
         SplitPanelView(
             node: child,
             focusedPanelID: focusedPanelID,
+            selectedDocumentURL: selectedDocumentURL,
             documentSessionStore: documentSessionStore,
             documentFileWatchStore: documentFileWatchStore,
             previewSessionStore: previewSessionStore,
@@ -113,9 +115,9 @@ struct SplitPanelView: View {
             terminalPreferencesStore: terminalPreferencesStore,
             notifications: notifications,
             onFocus: onFocus,
-            onReplaceSurface: onReplaceSurface,
             onSplit: onSplit,
             onCreateTerminal: onCreateTerminal,
+            onOpenSelectedDocument: onOpenSelectedDocument,
             onUpdateSplitRatio: onUpdateSplitRatio
         )
     }
@@ -162,8 +164,12 @@ struct SplitPanelView: View {
                     sessionID: sessionID,
                     terminalSessionController: terminalSessionController,
                     terminalOutputStore: terminalOutputStore,
-                    terminalPreferencesStore: terminalPreferencesStore
+                    terminalPreferencesStore: terminalPreferencesStore,
+                    onCreateTerminal: {
+                        onCreateTerminal(panelID)
+                    }
                 )
+                .id(sessionID)
             case .editor(let documentID):
                 DocumentEditorPanelSurfaceView(
                     documentID: documentID,
@@ -185,14 +191,15 @@ struct SplitPanelView: View {
                 PanelSurfacePlaceholderView(
                     surface: surface,
                     isFocused: focusedPanelID == panelID,
-                    onReplaceSurface: { replacement in
-                        onReplaceSurface(panelID, replacement)
-                    },
+                    selectedDocumentURL: selectedDocumentURL,
                     onSplit: { direction in
                         onSplit(panelID, direction)
                     },
                     onCreateTerminal: {
                         onCreateTerminal(panelID)
+                    },
+                    onOpenSelectedDocument: { preferredSurface in
+                        onOpenSelectedDocument(panelID, preferredSurface)
                     }
                 )
             }
@@ -266,6 +273,7 @@ private struct TerminalPanelSurfaceView: View {
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
+    var onCreateTerminal: () -> Void
     @StateObject private var viewModel: TerminalViewModel
     @State private var lastResizedGridSize: TerminalGridSizeEstimator?
 
@@ -273,12 +281,14 @@ private struct TerminalPanelSurfaceView: View {
         sessionID: TerminalSession.ID,
         terminalSessionController: TerminalSessionController,
         terminalOutputStore: TerminalOutputStore,
-        terminalPreferencesStore: TerminalPreferencesStore
+        terminalPreferencesStore: TerminalPreferencesStore,
+        onCreateTerminal: @escaping () -> Void
     ) {
         self.sessionID = sessionID
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore
         self.terminalPreferencesStore = terminalPreferencesStore
+        self.onCreateTerminal = onCreateTerminal
         _viewModel = StateObject(
             wrappedValue: TerminalViewModel(
                 session: terminalSessionController.session(for: sessionID),
@@ -301,7 +311,8 @@ private struct TerminalPanelSurfaceView: View {
                 },
                 onIncreaseFontSize: {
                     terminalPreferencesStore.adjustFontSize(by: TerminalAppearance.fontSizeStep)
-                }
+                },
+                onCreateTerminal: onCreateTerminal
             )
 
             GeometryReader { proxy in
@@ -360,6 +371,7 @@ private struct TerminalPanelHeader: View {
     var onDecreaseFontSize: () -> Void
     var onResetFontSize: () -> Void
     var onIncreaseFontSize: () -> Void
+    var onCreateTerminal: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -369,6 +381,7 @@ private struct TerminalPanelHeader: View {
             Spacer()
             Text(session?.status.rawValue.capitalized ?? "Missing")
                 .foregroundStyle(.secondary)
+            restartTerminalButton
             terminalThemeMenu
             terminalFontControls
         }
@@ -376,6 +389,26 @@ private struct TerminalPanelHeader: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var restartTerminalButton: some View {
+        if canCreateReplacementTerminal {
+            Button(action: onCreateTerminal) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Open a new terminal in this panel")
+            .accessibilityLabel("Open a new terminal in this panel")
+        }
+    }
+
+    private var canCreateReplacementTerminal: Bool {
+        guard let status = session?.status else {
+            return true
+        }
+
+        return status == .terminated || status == .failed
     }
 
     private var terminalThemeMenu: some View {
