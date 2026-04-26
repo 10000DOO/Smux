@@ -284,6 +284,7 @@ private struct TerminalPanelSurfaceView: View {
             GeometryReader { proxy in
                 TerminalViewRepresentable(
                     buffer: terminalOutputStore.output(for: sessionID),
+                    styledRuns: terminalOutputStore.styledOutput(for: sessionID),
                     onInput: viewModel.sendInput
                 )
                 .onAppear {

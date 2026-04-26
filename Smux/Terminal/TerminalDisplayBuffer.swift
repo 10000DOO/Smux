@@ -1,5 +1,43 @@
 import Foundation
 
+nonisolated struct TerminalStyledTextRun: Equatable {
+    var text: String
+    var style: TerminalTextStyle
+}
+
+nonisolated struct TerminalTextStyle: Equatable {
+    static let `default` = TerminalTextStyle()
+
+    var foreground: TerminalTextColor?
+    var background: TerminalTextColor?
+    var isBold = false
+    var isItalic = false
+    var isUnderline = false
+}
+
+nonisolated enum TerminalTextColor: Equatable {
+    case ansi(TerminalANSIColor)
+}
+
+nonisolated enum TerminalANSIColor: Int, Equatable {
+    case black
+    case red
+    case green
+    case yellow
+    case blue
+    case magenta
+    case cyan
+    case white
+    case brightBlack
+    case brightRed
+    case brightGreen
+    case brightYellow
+    case brightBlue
+    case brightMagenta
+    case brightCyan
+    case brightWhite
+}
+
 nonisolated struct TerminalDisplayBuffer: Equatable {
     static let defaultMaximumCharacterCount = 200_000
 
@@ -11,9 +49,23 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
     private var parserState: ParserState = .normal
     private var carriageReturnPending = false
     private var primaryScreenSnapshot: ScreenSnapshot?
+    private var currentStyle = TerminalTextStyle.default
 
     var text: String {
         lines.map { line in String(line.map(\.character)) }.joined(separator: "\n")
+    }
+
+    var styledRuns: [TerminalStyledTextRun] {
+        var runs: [TerminalStyledTextRun] = []
+
+        for (lineIndex, line) in lines.enumerated() {
+            append(line: line, to: &runs)
+            if lineIndex < lines.index(before: lines.endIndex) {
+                append(character: "\n", style: .default, to: &runs)
+            }
+        }
+
+        return runs
     }
 
     init(
@@ -47,6 +99,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         parserState = .normal
         carriageReturnPending = false
         primaryScreenSnapshot = nil
+        currentStyle = .default
     }
 
     private mutating func process(_ character: Character) {
@@ -168,6 +221,8 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             clearScreen(parameters: parameters)
         case "K":
             clearLine(parameters: parameters)
+        case "m":
+            applySGR(parameters: parameters)
         case "h":
             setPrivateMode(parameters: parameters, enabled: true)
         case "l":
@@ -181,7 +236,11 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         beginVisibleWrite()
         ensureCursorLine()
 
-        let cell = DisplayCell(character: character, width: displayWidth(of: character))
+        let cell = DisplayCell(
+            character: character,
+            width: displayWidth(of: character),
+            style: currentStyle
+        )
         let writeRange = cursorColumn..<(cursorColumn + cell.width)
 
         padCursorLine(to: cursorColumn)
@@ -345,7 +404,8 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             lines: lines,
             cursorLineIndex: cursorLineIndex,
             cursorColumn: cursorColumn,
-            carriageReturnPending: carriageReturnPending
+            carriageReturnPending: carriageReturnPending,
+            currentStyle: currentStyle
         )
         clearScreen()
     }
@@ -359,6 +419,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         cursorLineIndex = primaryScreenSnapshot.cursorLineIndex
         cursorColumn = primaryScreenSnapshot.cursorColumn
         carriageReturnPending = primaryScreenSnapshot.carriageReturnPending
+        currentStyle = primaryScreenSnapshot.currentStyle
         self.primaryScreenSnapshot = nil
         ensureCursorLine()
     }
@@ -508,7 +569,10 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             return []
         }
 
-        return Array(repeating: DisplayCell(character: " ", width: 1), count: count)
+        return Array(
+            repeating: DisplayCell(character: " ", width: 1, style: .default),
+            count: count
+        )
     }
 
     private func displayWidth(of line: [DisplayCell]) -> Int {
@@ -517,6 +581,66 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
 
     private func displayWidth(of character: Character) -> Int {
         character.unicodeScalars.contains(where: isWideScalar) ? 2 : 1
+    }
+
+    private mutating func applySGR(parameters: String) {
+        let values = sgrValues(from: parameters)
+        var index = 0
+
+        while index < values.count {
+            let value = values[index]
+
+            switch value {
+            case 0:
+                currentStyle = .default
+            case 1:
+                currentStyle.isBold = true
+            case 3:
+                currentStyle.isItalic = true
+            case 4:
+                currentStyle.isUnderline = true
+            case 22:
+                currentStyle.isBold = false
+            case 23:
+                currentStyle.isItalic = false
+            case 24:
+                currentStyle.isUnderline = false
+            case 30...37:
+                currentStyle.foreground = .ansi(TerminalANSIColor(rawValue: value - 30) ?? .white)
+            case 39:
+                currentStyle.foreground = nil
+            case 40...47:
+                currentStyle.background = .ansi(TerminalANSIColor(rawValue: value - 40) ?? .black)
+            case 49:
+                currentStyle.background = nil
+            case 90...97:
+                currentStyle.foreground = .ansi(TerminalANSIColor(rawValue: value - 90 + 8) ?? .brightWhite)
+            case 100...107:
+                currentStyle.background = .ansi(TerminalANSIColor(rawValue: value - 100 + 8) ?? .brightBlack)
+            default:
+                break
+            }
+
+            index += 1
+        }
+    }
+
+    private func sgrValues(from parameters: String) -> [Int] {
+        guard !parameters.isEmpty else {
+            return [0]
+        }
+
+        let values = parameters
+            .split(separator: ";", omittingEmptySubsequences: false)
+            .map { parameter -> Int in
+                guard !parameter.isEmpty else {
+                    return 0
+                }
+
+                return Int(parameter) ?? 0
+            }
+
+        return values.isEmpty ? [0] : values
     }
 
     private func parameterValue(_ parameters: String, at index: Int, defaultValue: Int) -> Int {
@@ -576,6 +700,24 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         }
     }
 
+    private func append(line: [DisplayCell], to runs: inout [TerminalStyledTextRun]) {
+        for cell in line {
+            append(character: cell.character, style: cell.style, to: &runs)
+        }
+    }
+
+    private func append(
+        character: Character,
+        style: TerminalTextStyle,
+        to runs: inout [TerminalStyledTextRun]
+    ) {
+        if let lastRun = runs.last, lastRun.style == style {
+            runs[runs.index(before: runs.endIndex)].text.append(character)
+        } else {
+            runs.append(TerminalStyledTextRun(text: String(character), style: style))
+        }
+    }
+
     private enum ParserState: Equatable {
         case normal
         case escape
@@ -589,10 +731,12 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         var cursorLineIndex: Int
         var cursorColumn: Int
         var carriageReturnPending: Bool
+        var currentStyle: TerminalTextStyle
     }
 
     private struct DisplayCell: Equatable {
         var character: Character
         var width: Int
+        var style: TerminalTextStyle
     }
 }

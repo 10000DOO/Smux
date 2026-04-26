@@ -35,6 +35,53 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "red plain")
     }
 
+    func testANSIStyleSequencesCreateStyledRuns() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("\u{1B}[31;1;4mred\u{1B}[0m plain")
+
+        XCTAssertEqual(
+            buffer.styledRuns,
+            [
+                TerminalStyledTextRun(
+                    text: "red",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.red),
+                        background: nil,
+                        isBold: true,
+                        isItalic: false,
+                        isUnderline: true
+                    )
+                ),
+                TerminalStyledTextRun(text: " plain", style: .default)
+            ]
+        )
+    }
+
+    func testANSIStyledCursorOverwriteUpdatesStyledRuns() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("a\u{1B}[31mb\u{1B}[0m\u{1B}[1D\u{1B}[32mX")
+
+        XCTAssertEqual(buffer.text, "aX")
+        XCTAssertEqual(
+            buffer.styledRuns,
+            [
+                TerminalStyledTextRun(text: "a", style: .default),
+                TerminalStyledTextRun(
+                    text: "X",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.green),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: false
+                    )
+                )
+            ]
+        )
+    }
+
     func testClearLineRemovesCurrentLineContent() {
         var buffer = TerminalDisplayBuffer()
 
@@ -152,5 +199,20 @@ final class TerminalDisplayBufferTests: XCTestCase {
 
         XCTAssertEqual(buffer.text, "\u{1B}[31mred\u{1B}[0m")
         XCTAssertEqual(buffer.displayText, "red")
+        XCTAssertEqual(
+            buffer.displayRuns,
+            [
+                TerminalStyledTextRun(
+                    text: "red",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.red),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: false
+                    )
+                )
+            ]
+        )
     }
 }

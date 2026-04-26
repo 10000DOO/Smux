@@ -22,6 +22,10 @@ nonisolated struct TerminalOutputBuffer: Equatable {
         displayBuffer.text
     }
 
+    var displayRuns: [TerminalStyledTextRun] {
+        displayBuffer.styledRuns
+    }
+
     mutating func append(_ output: String) {
         guard !output.isEmpty else {
             return

@@ -13,6 +13,29 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleOutput, "hello world")
     }
 
+    func testAppendOutputPublishesStyledOutput() {
+        let viewModel = TerminalViewModel()
+
+        viewModel.appendOutput("\u{1B}[34;4mblue\u{1B}[0m")
+
+        XCTAssertEqual(viewModel.visibleOutput, "blue")
+        XCTAssertEqual(
+            viewModel.visibleStyledOutput,
+            [
+                TerminalStyledTextRun(
+                    text: "blue",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.blue),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: true
+                    )
+                )
+            ]
+        )
+    }
+
     func testAppendOutputPreservesSplitUTF8ScalarsAcrossChunks() {
         let viewModel = TerminalViewModel()
         let bytes = Array("한".utf8)
@@ -116,6 +139,33 @@ final class TerminalViewModelTests: XCTestCase {
         textView.keyDown(with: event)
 
         XCTAssertTrue(inputs.isEmpty)
+    }
+
+    func testAttributedRendererAppliesTerminalStyles() throws {
+        let style = TerminalTextStyle(
+            foreground: .ansi(.red),
+            background: .ansi(.brightBlack),
+            isBold: true,
+            isItalic: false,
+            isUnderline: true
+        )
+        let attributedText = TerminalAttributedTextRenderer.attributedString(
+            text: "red",
+            styledRuns: [TerminalStyledTextRun(text: "red", style: style)],
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            defaultForeground: .labelColor
+        )
+
+        XCTAssertEqual(attributedText.string, "red")
+        XCTAssertNotNil(attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil))
+        XCTAssertNotNil(attributedText.attribute(.backgroundColor, at: 0, effectiveRange: nil))
+        XCTAssertEqual(
+            attributedText.attribute(.underlineStyle, at: 0, effectiveRange: nil) as? Int,
+            NSUnderlineStyle.single.rawValue
+        )
+
+        let font = try XCTUnwrap(attributedText.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        XCTAssertTrue(NSFontManager.shared.traits(of: font).contains(.boldFontMask))
     }
 
     func testTerminalGridSizeEstimatorClampsAndUsesInsets() {

@@ -5,13 +5,16 @@ struct TerminalViewRepresentable: NSViewRepresentable {
     typealias NSViewType = NSScrollView
 
     var buffer: String
+    var styledRuns: [TerminalStyledTextRun]
     var onInput: (String) -> Void
 
     init(
         buffer: String = "",
+        styledRuns: [TerminalStyledTextRun] = [],
         onInput: @escaping (String) -> Void = { _ in }
     ) {
         self.buffer = buffer
+        self.styledRuns = styledRuns
         self.onInput = onInput
     }
 
@@ -31,7 +34,7 @@ struct TerminalViewRepresentable: NSViewRepresentable {
         let textView = TerminalTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true
         textView.importsGraphics = false
         textView.usesFindPanel = true
         textView.drawsBackground = true
@@ -49,7 +52,7 @@ struct TerminalViewRepresentable: NSViewRepresentable {
         textView.inputHandler = context.coordinator.handleInput
 
         scrollView.documentView = textView
-        updateText(buffer, in: textView)
+        context.coordinator.updateText(buffer, styledRuns: styledRuns, in: textView)
         DispatchQueue.main.async {
             textView.window?.makeFirstResponder(textView)
         }
@@ -62,29 +65,14 @@ struct TerminalViewRepresentable: NSViewRepresentable {
             return
         }
 
-        updateText(buffer, in: textView)
+        context.coordinator.updateText(buffer, styledRuns: styledRuns, in: textView)
         textView.inputHandler = context.coordinator.handleInput
-    }
-
-    private func updateText(_ text: String, in textView: TerminalTextView) {
-        guard textView.string != text else {
-            return
-        }
-
-        let shouldFollowTail = textView.shouldFollowTailOnTextUpdate()
-        let visibleOrigin = textView.enclosingScrollView?.contentView.bounds.origin
-        textView.string = text
-        textView.ensureTextLayout()
-
-        if shouldFollowTail {
-            textView.scrollToEndOfDocument(nil)
-        } else if let visibleOrigin {
-            textView.restoreVisibleOrigin(visibleOrigin)
-        }
     }
 
     final class Coordinator {
         var onInput: (String) -> Void
+        private var renderedBuffer = ""
+        private var renderedRuns: [TerminalStyledTextRun] = []
 
         init(onInput: @escaping (String) -> Void) {
             self.onInput = onInput
@@ -92,6 +80,148 @@ struct TerminalViewRepresentable: NSViewRepresentable {
 
         func handleInput(_ text: String) {
             onInput(text)
+        }
+
+        func updateText(
+            _ text: String,
+            styledRuns: [TerminalStyledTextRun],
+            in textView: TerminalTextView
+        ) {
+            guard renderedBuffer != text || renderedRuns != styledRuns || textView.string != text else {
+                return
+            }
+
+            let shouldFollowTail = textView.shouldFollowTailOnTextUpdate()
+            let visibleOrigin = textView.enclosingScrollView?.contentView.bounds.origin
+            let font = textView.font ?? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            let attributedText = TerminalAttributedTextRenderer.attributedString(
+                text: text,
+                styledRuns: styledRuns,
+                font: font,
+                defaultForeground: textView.textColor ?? .labelColor
+            )
+
+            textView.textStorage?.setAttributedString(attributedText)
+            renderedBuffer = text
+            renderedRuns = styledRuns
+            textView.ensureTextLayout()
+
+            if shouldFollowTail {
+                textView.scrollToEndOfDocument(nil)
+            } else if let visibleOrigin {
+                textView.restoreVisibleOrigin(visibleOrigin)
+            }
+        }
+    }
+}
+
+enum TerminalAttributedTextRenderer {
+    static func attributedString(
+        text: String,
+        styledRuns: [TerminalStyledTextRun],
+        font: NSFont,
+        defaultForeground: NSColor
+    ) -> NSAttributedString {
+        let normalizedRuns = runsMatching(text: text, styledRuns: styledRuns)
+        let attributedText = NSMutableAttributedString()
+
+        for run in normalizedRuns {
+            attributedText.append(
+                NSAttributedString(
+                    string: run.text,
+                    attributes: attributes(
+                        for: run.style,
+                        font: font,
+                        defaultForeground: defaultForeground
+                    )
+                )
+            )
+        }
+
+        return attributedText
+    }
+
+    private static func runsMatching(
+        text: String,
+        styledRuns: [TerminalStyledTextRun]
+    ) -> [TerminalStyledTextRun] {
+        guard !styledRuns.isEmpty,
+              styledRuns.map(\.text).joined() == text else {
+            return [TerminalStyledTextRun(text: text, style: .default)]
+        }
+
+        return styledRuns
+    }
+
+    private static func attributes(
+        for style: TerminalTextStyle,
+        font: NSFont,
+        defaultForeground: NSColor
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: styledFont(baseFont: font, style: style),
+            .foregroundColor: color(for: style.foreground) ?? defaultForeground
+        ]
+
+        if let backgroundColor = color(for: style.background) {
+            attributes[.backgroundColor] = backgroundColor
+        }
+        if style.isUnderline {
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        }
+
+        return attributes
+    }
+
+    private static func styledFont(baseFont: NSFont, style: TerminalTextStyle) -> NSFont {
+        var font = baseFont
+        if style.isBold {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        }
+        if style.isItalic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        }
+        return font
+    }
+
+    private static func color(for color: TerminalTextColor?) -> NSColor? {
+        guard case let .ansi(ansiColor) = color else {
+            return nil
+        }
+
+        switch ansiColor {
+        case .black:
+            return .black
+        case .red:
+            return .systemRed
+        case .green:
+            return .systemGreen
+        case .yellow:
+            return .systemYellow
+        case .blue:
+            return .systemBlue
+        case .magenta:
+            return .systemPurple
+        case .cyan:
+            return .systemCyan
+        case .white:
+            return .white
+        case .brightBlack:
+            return .systemGray
+        case .brightRed:
+            return .systemRed
+        case .brightGreen:
+            return .systemGreen
+        case .brightYellow:
+            return .systemYellow
+        case .brightBlue:
+            return .systemBlue
+        case .brightMagenta:
+            return .systemPink
+        case .brightCyan:
+            return .systemTeal
+        case .brightWhite:
+            return .white
         }
     }
 }

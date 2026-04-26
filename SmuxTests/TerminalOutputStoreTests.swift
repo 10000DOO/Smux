@@ -36,6 +36,30 @@ final class TerminalOutputStoreTests: XCTestCase {
         XCTAssertEqual(store.output(for: sessionID), "new")
     }
 
+    func testStyledOutputPreservesANSIRuns() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+
+        store.append("\u{1B}[32mnew\u{1B}[0m plain", for: sessionID)
+
+        XCTAssertEqual(
+            store.styledOutput(for: sessionID),
+            [
+                TerminalStyledTextRun(
+                    text: "new",
+                    style: TerminalTextStyle(
+                        foreground: .ansi(.green),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: false
+                    )
+                ),
+                TerminalStyledTextRun(text: " plain", style: .default)
+            ]
+        )
+    }
+
     func testClearRemovesOnlyRequestedSessionOutput() {
         let firstSessionID = TerminalSession.ID()
         let secondSessionID = TerminalSession.ID()
@@ -47,5 +71,6 @@ final class TerminalOutputStoreTests: XCTestCase {
 
         XCTAssertEqual(store.output(for: firstSessionID), "")
         XCTAssertEqual(store.output(for: secondSessionID), "second")
+        XCTAssertEqual(store.styledOutput(for: firstSessionID), [])
     }
 }
