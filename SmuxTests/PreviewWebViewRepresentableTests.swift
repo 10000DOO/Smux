@@ -145,6 +145,75 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
     }
 
     @MainActor
+    func testWebViewRendersCommonMermaidDiagramsOffline() async throws {
+        let blocks = [
+            makeMermaidBlock(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000021")!,
+                startLine: 2,
+                endLine: 5,
+                source: """
+                flowchart LR
+                    A[Start] --> B{Ready?}
+                    B --> C[Render]
+                """
+            ),
+            makeMermaidBlock(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000022")!,
+                startLine: 7,
+                endLine: 10,
+                source: """
+                sequenceDiagram
+                    participant Editor
+                    participant Preview
+                    Editor->>Preview: Update
+                """
+            ),
+            makeMermaidBlock(
+                id: UUID(uuidString: "00000000-0000-0000-0000-000000000023")!,
+                startLine: 12,
+                endLine: 15,
+                source: """
+                stateDiagram-v2
+                    [*] --> Pending
+                    Pending --> Rendered
+                """
+            )
+        ]
+        let placeholders = blocks.map { block in
+            """
+            <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(block.id.uuidString)" data-source-start-line="\(block.sourceRange.startLine)" data-source-end-line="\(block.sourceRange.endLine)"></div>
+            """
+        }.joined(separator: "\n")
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1>Diagrams</h1>\n\(placeholders)"),
+            mermaidBlocks: blocks
+        )
+        let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
+        XCTAssertFalse(html.contains("<script src="))
+        XCTAssertFalse(html.contains("cdn.jsdelivr"))
+        XCTAssertFalse(html.contains("unpkg.com"))
+
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let navigationDelegate = PreviewWebViewNavigationDelegate()
+        webView.navigationDelegate = navigationDelegate
+        let loadFinished = expectation(description: "Preview WebView load finished")
+        navigationDelegate.didFinish = { loadFinished.fulfill() }
+        navigationDelegate.didFail = { error in
+            XCTFail("Preview WebView load failed: \(error)")
+            loadFinished.fulfill()
+        }
+
+        webView.loadHTMLString(html, baseURL: nil)
+        await fulfillment(of: [loadFinished], timeout: 5)
+
+        let status = try await waitForMermaidRender(in: webView, expectedDiagramCount: blocks.count)
+        XCTAssertEqual(status.svgCount, blocks.count)
+        XCTAssertEqual(status.failedCount, 0)
+        XCTAssertEqual(status.externalScriptCount, 0)
+        XCTAssertTrue(status.badges.allSatisfy { $0 == "Rendered" })
+    }
+
+    @MainActor
     func testNavigationPolicyAllowsInternalAnchorLinksAndBlocksExternalLinks() {
         XCTAssertEqual(
             PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "#section")),
@@ -168,6 +237,65 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         )
     }
 
+    @MainActor
+    private func waitForMermaidRender(
+        in webView: WKWebView,
+        expectedDiagramCount: Int
+    ) async throws -> MermaidWebViewStatus {
+        var latestStatus = MermaidWebViewStatus(
+            svgCount: 0,
+            failedCount: 0,
+            externalScriptCount: 0,
+            badges: []
+        )
+
+        for _ in 0..<50 {
+            latestStatus = try await mermaidStatus(in: webView)
+            if latestStatus.svgCount == expectedDiagramCount,
+               latestStatus.failedCount == 0,
+               latestStatus.badges.count == expectedDiagramCount,
+               latestStatus.badges.allSatisfy({ $0 == "Rendered" }) {
+                return latestStatus
+            }
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        XCTFail("Timed out waiting for Mermaid render status: \(latestStatus)")
+        return latestStatus
+    }
+
+    @MainActor
+    private func mermaidStatus(in webView: WKWebView) async throws -> MermaidWebViewStatus {
+        let script = """
+        JSON.stringify({
+            svgCount: document.querySelectorAll(".mermaid-block svg").length,
+            failedCount: document.querySelectorAll(".mermaid-block--failed").length,
+            externalScriptCount: Array.from(document.scripts).filter((script) => script.src).length,
+            badges: Array.from(document.querySelectorAll(".mermaid-badge")).map((badge) => badge.textContent)
+        })
+        """
+        let value = try await webView.evaluateJavaScript(script)
+        let json = try XCTUnwrap(value as? String)
+        return try JSONDecoder().decode(MermaidWebViewStatus.self, from: Data(json.utf8))
+    }
+
+    private func makeMermaidBlock(
+        id: UUID,
+        startLine: Int,
+        endLine: Int,
+        source: String
+    ) -> MermaidBlockState {
+        MermaidBlockState(
+            id: id,
+            sourceRange: SourceRange(startLine: startLine, endLine: endLine),
+            source: source,
+            status: .pending,
+            artifact: nil,
+            errorMessage: nil
+        )
+    }
+
     private func makeState(
         sanitizedMarkdown: SanitizedMarkdown?,
         mermaidBlocks: [MermaidBlockState] = [],
@@ -183,5 +311,34 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
             zoom: 1,
             scrollAnchor: nil
         )
+    }
+}
+
+private struct MermaidWebViewStatus: Decodable, CustomStringConvertible {
+    var svgCount: Int
+    var failedCount: Int
+    var externalScriptCount: Int
+    var badges: [String]
+
+    var description: String {
+        "svgCount=\(svgCount), failedCount=\(failedCount), externalScriptCount=\(externalScriptCount), badges=\(badges)"
+    }
+}
+
+@MainActor
+private final class PreviewWebViewNavigationDelegate: NSObject, WKNavigationDelegate {
+    var didFinish: (() -> Void)?
+    var didFail: ((Error) -> Void)?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        didFinish?()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
+        didFail?(error)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        didFail?(error)
     }
 }

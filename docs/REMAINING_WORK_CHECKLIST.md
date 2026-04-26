@@ -18,7 +18,8 @@ Last updated: 2026-04-26
 - Markdown/Mermaid editor, autosave core, conflict/failure save state, explicit save UI가 구현됨.
 - 열린 문서 file watching, 외부 변경 감지, dirty conflict 보존, clean reload와 preview refresh가 구현됨.
 - Markdown preview pipeline, editor-preview sync, heading anchors, internal anchor policy가 구현됨.
-- 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결과 대표 fixture 검증이 구현됨.
+- 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
+  WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
   agent 상태 감지와 panel badge/activation 일부가 구현됨.
 - 현재 slice에서 `xcodebuild -project Smux.xcodeproj -scheme Smux -destination 'platform=macOS' test`
@@ -41,7 +42,7 @@ Last updated: 2026-04-26
 | P0-1 | 외부 파일 변경 감지와 editor/preview 반영 | Implemented and verified |
 | P0-2 | panel splitter size 조절 및 ratio 복원 | Implemented and verified |
 | P0-3 | terminal 호환성 고도화 | Implemented and verified |
-| P0-4 | Mermaid sample fixture와 offline render 검증 | Fixture/offline HTML tests verified; WebView pixel verification remains |
+| P0-4 | Mermaid sample fixture와 offline render 검증 | Implemented and verified |
 | P0-5 | performance/memory measurement | No automated benchmark yet |
 | P1-1 | editor Markdown syntax highlight | Not started |
 | P1-2 | preview code syntax highlight | Language metadata exists, highlighter missing |
@@ -110,7 +111,7 @@ Suggested write set:
 
 - [x] Add fixture Markdown containing representative Mermaid diagram types.
 - [x] Add preview HTML assertions for bundled offline Mermaid script path.
-- [ ] Add UI or WebView-level verification that common diagrams render without network.
+- [x] Add UI or WebView-level verification that common diagrams render without network.
 - [x] Document supported/unsupported Mermaid behaviors.
 
 Suggested write set:
@@ -197,4 +198,5 @@ editor/preview UI changes.
 - [x] Heading anchors and internal anchor navigation policy.
 - [x] Offline bundled official Mermaid renderer resource.
 - [x] Representative Mermaid fixture and offline preview HTML assertions.
+- [x] WebView-level offline Mermaid SVG render verification.
 - [x] Terminal-output based agent status detection and notification badges.
