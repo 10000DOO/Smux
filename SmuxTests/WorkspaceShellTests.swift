@@ -94,6 +94,59 @@ final class WorkspaceShellTests: XCTestCase {
         )
     }
 
+    func testLeftRailNotificationSummaryGroupsAgentStatuses() {
+        let workspaceID = Workspace.ID()
+        let notifications = [
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: PanelNode.ID(),
+                shouldBadgePanel: true,
+                agentKind: .waitingForInput
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: PanelNode.ID(),
+                shouldBadgePanel: true,
+                agentKind: .permissionRequested
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: nil,
+                shouldBadgePanel: false,
+                agentKind: .completed
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: nil,
+                shouldBadgePanel: false,
+                agentKind: .failed
+            ),
+        ]
+
+        let summary = LeftRailNotificationSummary.make(from: notifications)
+
+        XCTAssertEqual(summary.waitingCount, 2)
+        XCTAssertEqual(summary.completedCount, 1)
+        XCTAssertEqual(summary.failedCount, 1)
+        XCTAssertEqual(summary.items.map(\.title), ["Waiting", "Done", "Failed"])
+    }
+
+    func testLeftRailNotificationPresentationUsesAgentKindAndAcknowledgementState() {
+        let notification = workspaceNotification(
+            workspaceID: Workspace.ID(),
+            panelID: PanelNode.ID(),
+            shouldBadgePanel: true,
+            agentKind: .permissionRequested
+        )
+
+        let presentation = LeftRailNotificationPresentation(notification: notification)
+
+        XCTAssertEqual(presentation.title, "Permission")
+        XCTAssertEqual(presentation.systemImage, "hand.raised")
+        XCTAssertEqual(presentation.message, "Notification")
+        XCTAssertTrue(presentation.showsAcknowledge)
+    }
+
     @MainActor
     func testPanelStoreReplacesRequestedPanelWithoutPreFocusing() {
         let firstPanelID = UUID()
@@ -146,14 +199,17 @@ final class WorkspaceShellTests: XCTestCase {
         workspaceID: Workspace.ID,
         panelID: PanelNode.ID?,
         shouldBadgePanel: Bool,
+        agentKind: AgentNotificationKind? = nil,
         acknowledgedAt: Date? = nil
     ) -> WorkspaceNotification {
         WorkspaceNotification(
             id: UUID(),
             workspaceID: workspaceID,
-            source: .system,
+            source: agentKind == nil ? .system : .agent(UUID()),
             level: .warning,
+            agentKind: agentKind,
             message: "Notification",
+            createdAt: Date(timeIntervalSince1970: 1),
             routing: WorkspaceNotificationRouting(
                 panelID: panelID,
                 shouldShowInLeftRail: true,

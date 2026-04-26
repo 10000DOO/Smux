@@ -37,7 +37,9 @@ final class NotificationStoreTests: XCTestCase {
         XCTAssertEqual(store.notifications.first?.workspaceID, workspaceID)
         XCTAssertEqual(store.notifications.first?.source, .agent(notificationID))
         XCTAssertEqual(store.notifications.first?.level, .error)
+        XCTAssertEqual(store.notifications.first?.agentKind, .failed)
         XCTAssertEqual(store.notifications.first?.message, "Failed")
+        XCTAssertEqual(store.notifications.first?.createdAt, updated.createdAt)
         XCTAssertNil(store.notifications.first?.routing.panelID)
         XCTAssertTrue(notifier.deliveries.isEmpty)
     }

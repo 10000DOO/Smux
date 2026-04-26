@@ -42,7 +42,9 @@ final class NotificationStore: ObservableObject {
             workspaceID: notification.workspaceID,
             source: .agent(notification.id),
             level: notification.level,
+            agentKind: notification.kind,
             message: notification.message,
+            createdAt: notification.createdAt,
             routing: policy.route(routedNotification),
             acknowledgedAt: acknowledgedAt
         )

@@ -189,8 +189,17 @@ private extension LeftRailView {
 
     var latestNotifications: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Latest", systemImage: "bell")
-                .font(.subheadline)
+            HStack(spacing: 6) {
+                Label("Latest", systemImage: "bell")
+                    .font(.subheadline)
+                if notificationSummary.totalCount > 0 {
+                    Text("\(notificationSummary.totalCount)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            notificationStatusChips
 
             if visibleNotifications.isEmpty {
                 Text("No notifications")
@@ -204,46 +213,85 @@ private extension LeftRailView {
         }
     }
 
+    @ViewBuilder
+    var notificationStatusChips: some View {
+        if !notificationSummary.items.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(notificationSummary.items) { item in
+                    HStack(spacing: 4) {
+                        Image(systemName: item.systemImage)
+                        Text("\(item.count)")
+                    }
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 6)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                    .help(item.title)
+                }
+            }
+        } else {
+            EmptyView()
+        }
+    }
+
     func notificationRow(_ notification: WorkspaceNotification) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let presentation = LeftRailNotificationPresentation(notification: notification)
+
+        return HStack(alignment: .top, spacing: 6) {
             Button {
                 onSelectNotification(notification.id)
             } label: {
                 HStack(alignment: .top, spacing: 6) {
-                    Circle()
-                        .fill(notification.level.badgeColor)
-                        .frame(width: 6, height: 6)
-                        .padding(.top, 5)
-                    Text(notification.message)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: presentation.systemImage)
+                        .frame(width: 14)
+                        .foregroundStyle(notification.level.badgeColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(presentation.title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(notification.createdAt, style: .relative)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        Text(presentation.message)
+                            .lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .buttonStyle(.plain)
 
-            Button {
-                onAcknowledgeNotification(notification.id)
-            } label: {
-                Image(systemName: "checkmark")
-                    .frame(width: 14, height: 14)
+            if presentation.showsAcknowledge {
+                Button {
+                    onAcknowledgeNotification(notification.id)
+                } label: {
+                    Image(systemName: "checkmark")
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Acknowledge notification")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Acknowledge notification")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
     }
 
     var visibleNotifications: [WorkspaceNotification] {
-        Array(
-            notifications
-                .filter { notification in
-                    notification.routing.shouldShowInLeftRail
-                        && (workspace == nil || notification.workspaceID == workspace?.id)
-                }
-                .prefix(3)
-        )
+        Array(leftRailNotifications.prefix(3))
+    }
+
+    var leftRailNotifications: [WorkspaceNotification] {
+        notifications.filter { notification in
+            notification.routing.shouldShowInLeftRail
+                && (workspace == nil || notification.workspaceID == workspace?.id)
+        }
+    }
+
+    var notificationSummary: LeftRailNotificationSummary {
+        LeftRailNotificationSummary.make(from: leftRailNotifications)
     }
 
     var panelSummaries: [PanelLeafSummary] {

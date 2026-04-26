@@ -20,7 +20,9 @@ nonisolated struct WorkspaceNotification: Identifiable, Codable, Hashable {
     var workspaceID: Workspace.ID
     var source: WorkspaceNotificationSource
     var level: NotificationLevel
+    var agentKind: AgentNotificationKind?
     var message: String
+    var createdAt: Date
     var routing: WorkspaceNotificationRouting
     var acknowledgedAt: Date?
 }

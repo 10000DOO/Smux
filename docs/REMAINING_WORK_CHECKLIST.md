@@ -21,6 +21,8 @@ Last updated: 2026-04-26
 - Markdown preview code block syntax highlighting이 offline HTML span/CSS 기반으로 구현됨.
 - 선택된 Markdown/Mermaid 파일을 `Command+Option+E/P`로 새 editor/preview panel에 여는
   keyboard action이 구현됨.
+- Left rail notification summary chip, agent 상태별 latest notification 표시, acknowledge 상태별
+  row action 표시가 구현됨.
 - 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
   WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
@@ -50,7 +52,7 @@ Last updated: 2026-04-26
 | P1-1 | editor Markdown syntax highlight | Implemented and verified |
 | P1-2 | preview code syntax highlight | Implemented and verified |
 | P1-3 | keyboard actions for new editor/preview panels | Implemented and verified |
-| P1-4 | vertical tab status/last notification polish | Basic rail/badges done, richer status missing |
+| P1-4 | vertical tab status/last notification polish | Implemented and verified |
 | P1-5 | cmux/hook parity for agent detection | Terminal output detection done, hook adapter missing |
 | P1-6 | Mermaid zoom/pan controls | Preview zoom model exists, diagram pan UI missing |
 | P2-1 | external link opening policy UI | Policy hard-blocks external links now |
@@ -140,7 +142,7 @@ Suggested write set:
 - [x] Preview code block syntax highlighting without network dependency.
 - [x] Keyboard action to open a new editor panel for selected Markdown/Mermaid file.
 - [x] Keyboard action to open a new preview panel for selected Markdown/Mermaid file.
-- [ ] Richer left rail status for agent waiting/completed/failed and latest notification.
+- [x] Richer left rail status for agent waiting/completed/failed and latest notification.
 - [ ] Agent hook adapter for Codex/Claude-like structured events.
 - [ ] Mermaid zoom/pan controls and persisted preview zoom state.
 
@@ -157,11 +159,10 @@ The next work should run in slices. Parallel work is allowed only when write set
 
 ### Current Best Sequence
 
-1. P1 vertical tab status/last notification polish.
-2. P1 agent hook adapter for structured events.
-3. P1 Mermaid zoom/pan controls.
-4. P2 external link opening policy UI.
-5. P2 terminal font/theme settings.
+1. P1 agent hook adapter for structured events.
+2. P1 Mermaid zoom/pan controls.
+3. P2 external link opening policy UI.
+4. P2 terminal font/theme settings.
 
 ### Safe Parallel Groups
 
@@ -207,3 +208,4 @@ editor/preview UI changes.
 - [x] Performance baseline tests and measurement documentation.
 - [x] Editor Markdown syntax highlighting.
 - [x] Terminal-output based agent status detection and notification badges.
+- [x] Left rail notification summary and latest agent status presentation.
