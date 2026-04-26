@@ -12,6 +12,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var documentTextStore: DocumentTextStore?
     var terminalSessionController: TerminalSessionController?
     var previewSessionStore: PreviewSessionStore?
+    var workspaceSessionStore: WorkspaceSessionStore?
 
     init(
         workspaceStore: WorkspaceStore? = nil,
@@ -23,7 +24,8 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentFileWatchStore: DocumentFileWatchStore? = nil,
         documentTextStore: DocumentTextStore? = nil,
         terminalSessionController: TerminalSessionController? = nil,
-        previewSessionStore: PreviewSessionStore? = nil
+        previewSessionStore: PreviewSessionStore? = nil,
+        workspaceSessionStore: WorkspaceSessionStore? = nil
     ) {
         self.workspaceStore = workspaceStore
         self.panelStore = panelStore
@@ -35,6 +37,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.previewSessionStore = previewSessionStore
+        self.workspaceSessionStore = workspaceSessionStore
     }
 
     func openWorkspace(rootURL: URL) async throws {
@@ -128,18 +131,18 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         preferredSurface: DocumentOpenMode,
         replacingPanel panelID: PanelNode.ID?
     ) async throws {
-        let documentID = try createDocumentSession(for: url)
+        let editorSession = try createDocumentSession(for: url)
 
         switch preferredSurface {
         case .editor:
-            replacePanel(with: .editor(documentID: documentID), preferredPanelID: panelID)
+            replacePanel(with: .session(sessionID: editorSession.session.id), preferredPanelID: panelID)
         case .preview:
-            replacePanel(with: createPreviewSurface(sourceDocumentID: documentID), preferredPanelID: panelID)
+            replacePanel(with: createPreviewSurface(sourceDocumentID: editorSession.documentID), preferredPanelID: panelID)
         case .split:
-            replacePanel(with: .editor(documentID: documentID), preferredPanelID: panelID)
+            replacePanel(with: .session(sessionID: editorSession.session.id), preferredPanelID: panelID)
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
-                surface: createPreviewSurface(sourceDocumentID: documentID)
+                surface: createPreviewSurface(sourceDocumentID: editorSession.documentID)
             )
         }
     }
@@ -149,18 +152,18 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         preferredSurface: DocumentOpenMode,
         splitDirection: SplitDirection
     ) async throws {
-        let documentID = try createDocumentSession(for: url)
+        let editorSession = try createDocumentSession(for: url)
 
         switch preferredSurface {
         case .editor:
-            createPanel(splitDirection: splitDirection, surface: .editor(documentID: documentID))
+            createPanel(splitDirection: splitDirection, surface: .session(sessionID: editorSession.session.id))
         case .preview:
-            createPanel(splitDirection: splitDirection, surface: createPreviewSurface(sourceDocumentID: documentID))
+            createPanel(splitDirection: splitDirection, surface: createPreviewSurface(sourceDocumentID: editorSession.documentID))
         case .split:
-            createPanel(splitDirection: splitDirection, surface: .editor(documentID: documentID))
+            createPanel(splitDirection: splitDirection, surface: .session(sessionID: editorSession.session.id))
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
-                surface: createPreviewSurface(sourceDocumentID: documentID)
+                surface: createPreviewSurface(sourceDocumentID: editorSession.documentID)
             )
         }
     }
@@ -179,11 +182,21 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         }
 
         guard let session = try await terminalSessionController?.createSession(in: workspace, command: []) else {
-            replacePanel(with: .terminal(sessionID: TerminalSession.ID()), preferredPanelID: panelID)
+            let missingSession = WorkspaceSession(
+                workspaceID: workspace.id,
+                kind: .terminal,
+                content: .terminal(TerminalSession.ID()),
+                title: "Terminal",
+                createdAt: Date()
+            )
+            workspaceSessionStore?.upsertSession(missingSession)
+            replacePanel(with: .session(sessionID: missingSession.id), preferredPanelID: panelID)
             return
         }
 
-        replacePanel(with: .terminal(sessionID: session.id), preferredPanelID: panelID)
+        let workspaceSession = WorkspaceSession(terminal: session)
+        workspaceSessionStore?.upsertSession(workspaceSession)
+        replacePanel(with: .session(sessionID: workspaceSession.id), preferredPanelID: panelID)
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
@@ -194,6 +207,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         let snapshot = WorkspaceSnapshot(
             workspace: workspace,
             panelTree: panelStore?.rootNode,
+            workspaceSessions: workspaceSessionStore?.snapshotSessions(),
             sessions: terminalSessionController?.snapshotSessions() ?? [],
             documents: documentSessionStore?.snapshotSessions() ?? [],
             previews: previewSessionStore?.snapshotStates() ?? []
@@ -207,6 +221,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentSessionStore?.replaceSessions(snapshot?.documents ?? [])
         previewSessionStore?.replaceStates(snapshot?.previews ?? [])
         terminalSessionController?.replaceSnapshotSessions(snapshot?.sessions ?? [])
+        workspaceSessionStore?.replaceSessions(snapshot?.workspaceSessions ?? [])
     }
 
     private func currentGitBranch(for rootURL: URL) async -> String? {
@@ -218,7 +233,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         }
     }
 
-    private func createDocumentSession(for url: URL) throws -> DocumentSession.ID {
+    private func createDocumentSession(for url: URL) throws -> (session: WorkspaceSession, documentID: DocumentSession.ID) {
         guard let workspace = workspaceStore?.activeWorkspace else {
             throw WorkspaceCoordinatorError.missingActiveWorkspace
         }
@@ -230,23 +245,53 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             url: url
         )
         documentSessionStore?.upsertSession(session)
+        let workspaceSession = WorkspaceSession(document: session)
+        workspaceSessionStore?.upsertSession(workspaceSession)
 
-        return documentID
+        return (workspaceSession, documentID)
     }
 
     private func createPreviewSurface(sourceDocumentID documentID: DocumentSession.ID) -> PanelSurfaceDescriptor {
+        guard let workspace = workspaceStore?.activeWorkspace else {
+            return .empty
+        }
+
         let previewID = PreviewState.ID()
         previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
-        return .preview(previewID: previewID)
+        let workspaceSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspace.id,
+            kind: .preview,
+            content: .preview(previewID: previewID, sourceDocumentID: documentID),
+            title: "Preview",
+            createdAt: Date()
+        )
+        workspaceSessionStore?.upsertSession(workspaceSession)
+        return .session(sessionID: workspaceSession.id)
     }
 
     private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {
         if let panelID, panelStore?.rootNode.containsLeaf(panelID: panelID) == true {
+            let detachedSurface = panelStore?.rootNode.surface(forLeaf: panelID)
             panelStore?.replacePanel(panelID: panelID, with: surface)
+            cleanupReplacedPanelSurface(detachedSurface, replacement: surface)
             return
         }
 
+        let detachedSurface = panelStore?.focusedSurface
         panelStore?.replaceFocusedPanel(with: surface)
+        cleanupReplacedPanelSurface(detachedSurface, replacement: surface)
+    }
+
+    private func cleanupReplacedPanelSurface(
+        _ detachedSurface: PanelSurfaceDescriptor?,
+        replacement: PanelSurfaceDescriptor
+    ) {
+        guard detachedSurface != replacement else {
+            return
+        }
+
+        cleanupDetachedPanelSurface(detachedSurface)
     }
 }
 

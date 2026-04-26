@@ -92,24 +92,37 @@ extension WorkspaceCoordinator {
 
         let surface = panelStore.focusedSurface
         panelStore.closeFocusedPanel()
-        cleanupClosedPanelSurface(surface)
+        cleanupDetachedPanelSurface(surface)
     }
 
-    private func cleanupClosedPanelSurface(_ surface: PanelSurfaceDescriptor?) {
+    func cleanupDetachedPanelSurface(_ surface: PanelSurfaceDescriptor?) {
         guard let surface else {
             return
         }
 
         switch surface {
-        case .terminal(let sessionID):
-            terminalSessionController?.removeSession(sessionID: sessionID)
-        case .preview(let previewID):
-            previewSessionStore?.removePreview(previewID: previewID)
-        case .editor:
-            // Document sessions can be shared by editor and preview surfaces.
-            break
+        case .session(let sessionID):
+            cleanupDetachedWorkspaceSession(id: sessionID)
         case .empty:
             break
+        }
+    }
+
+    private func cleanupDetachedWorkspaceSession(id sessionID: WorkspaceSession.ID) {
+        guard let session = workspaceSessionStore?.session(for: sessionID) else {
+            return
+        }
+
+        switch session.content {
+        case .terminal(let terminalID):
+            terminalSessionController?.removeSession(sessionID: terminalID)
+            workspaceSessionStore?.removeSession(id: session.id)
+        case .preview(let previewID, _):
+            previewSessionStore?.removePreview(previewID: previewID)
+            workspaceSessionStore?.removeSession(id: session.id)
+        case .editor:
+            // Document content may be shared by preview sessions and text buffers.
+            workspaceSessionStore?.removeSession(id: session.id)
         }
     }
 }

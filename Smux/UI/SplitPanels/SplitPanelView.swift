@@ -12,6 +12,7 @@ struct SplitPanelView: View {
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
+    @ObservedObject var workspaceSessionStore: WorkspaceSessionStore
     var notifications: [WorkspaceNotification] = []
     var onFocus: (PanelNode.ID) -> Void
     var onSplit: (PanelNode.ID, SplitDirection) -> Void
@@ -113,6 +114,7 @@ struct SplitPanelView: View {
             terminalSessionController: terminalSessionController,
             terminalOutputStore: terminalOutputStore,
             terminalPreferencesStore: terminalPreferencesStore,
+            workspaceSessionStore: workspaceSessionStore,
             notifications: notifications,
             onFocus: onFocus,
             onSplit: onSplit,
@@ -147,8 +149,10 @@ struct SplitPanelView: View {
                     : value.translation.height
                 let ratioDelta = Double(delta / axisLength)
                 let newRatio = (dragStartRatio ?? node.normalizedRatio) + ratioDelta
+                let minimumPixelRatio = min(0.45, Double(SplitPanelDivider.minimumPanelLength / axisLength))
+                let pixelClampedRatio = min(max(newRatio, minimumPixelRatio), 1 - minimumPixelRatio)
 
-                onUpdateSplitRatio(node.id, PanelNode.clampedRatio(newRatio))
+                onUpdateSplitRatio(node.id, PanelNode.clampedRatio(pixelClampedRatio))
             }
             .onEnded { _ in
                 dragStartRatio = nil
@@ -159,34 +163,8 @@ struct SplitPanelView: View {
     private func surfaceView(_ surface: PanelSurfaceDescriptor, panelID: PanelNode.ID) -> some View {
         Group {
             switch surface {
-            case .terminal(let sessionID):
-                TerminalPanelSurfaceView(
-                    sessionID: sessionID,
-                    terminalSessionController: terminalSessionController,
-                    terminalOutputStore: terminalOutputStore,
-                    terminalPreferencesStore: terminalPreferencesStore,
-                    onCreateTerminal: {
-                        onCreateTerminal(panelID)
-                    }
-                )
-                .id(sessionID)
-            case .editor(let documentID):
-                DocumentEditorPanelSurfaceView(
-                    documentID: documentID,
-                    isFocused: focusedPanelID == panelID,
-                    documentSessionStore: documentSessionStore,
-                    documentFileWatchStore: documentFileWatchStore,
-                    documentTextStore: documentTextStore
-                )
-                .id(documentID)
-            case .preview(let previewID):
-                PreviewPanelSurfaceView(
-                    previewID: previewID,
-                    documentSessionStore: documentSessionStore,
-                    previewSessionStore: previewSessionStore,
-                    previewPreferencesStore: previewPreferencesStore,
-                    documentTextStore: documentTextStore
-                )
+            case .session(let sessionID):
+                sessionSurfaceView(sessionID: sessionID, panelID: panelID)
             case .empty:
                 PanelSurfacePlaceholderView(
                     surface: surface,
@@ -237,17 +215,90 @@ struct SplitPanelView: View {
             onFocus(panelID)
         }
     }
+
+    @ViewBuilder
+    private func sessionSurfaceView(sessionID: WorkspaceSession.ID, panelID: PanelNode.ID) -> some View {
+        if let session = workspaceSessionStore.session(for: sessionID) {
+            switch session.content {
+            case .terminal(let terminalID):
+                TerminalPanelSurfaceView(
+                    sessionID: terminalID,
+                    terminalSessionController: terminalSessionController,
+                    terminalOutputStore: terminalOutputStore,
+                    terminalPreferencesStore: terminalPreferencesStore,
+                    onCreateTerminal: {
+                        onCreateTerminal(panelID)
+                    }
+                )
+                .id(sessionID)
+            case .editor(let documentID):
+                DocumentEditorPanelSurfaceView(
+                    documentID: documentID,
+                    isFocused: focusedPanelID == panelID,
+                    documentSessionStore: documentSessionStore,
+                    documentFileWatchStore: documentFileWatchStore,
+                    documentTextStore: documentTextStore
+                )
+                .id(sessionID)
+            case .preview(let previewID, _):
+                PreviewPanelSurfaceView(
+                    previewID: previewID,
+                    documentSessionStore: documentSessionStore,
+                    previewSessionStore: previewSessionStore,
+                    previewPreferencesStore: previewPreferencesStore,
+                    documentTextStore: documentTextStore
+                )
+                .id(sessionID)
+            }
+        } else {
+            MissingSessionPanelSurfaceView(sessionID: sessionID)
+        }
+    }
+}
+
+private struct MissingSessionPanelSurfaceView: View {
+    var sessionID: WorkspaceSession.ID
+
+    var body: some View {
+        PlaceholderSurfaceView(
+            title: "Missing Session",
+            systemImage: "questionmark.square.dashed"
+        )
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
+        .help(sessionID.uuidString)
+    }
 }
 
 private struct SplitPanelDivider: View {
-    static let length: CGFloat = 6
+    static let length: CGFloat = 8
+    static let minimumPanelLength: CGFloat = 160
 
     var direction: SplitDirection
+    @State private var isHovering = false
 
     var body: some View {
-        Rectangle()
-            .fill(Color(nsColor: .separatorColor).opacity(0.8))
-            .contentShape(Rectangle())
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(isHovering ? 0.18 : 0.08))
+
+            Capsule()
+                .fill(Color.secondary.opacity(isHovering ? 0.42 : 0.18))
+                .frame(
+                    width: direction == .horizontal ? 3 : 42,
+                    height: direction == .horizontal ? 42 : 3
+                )
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                (direction == .horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+            } else {
+                NSCursor.pop()
+            }
+        }
             .accessibilityLabel(direction == .horizontal ? "Resize columns" : "Resize rows")
             .accessibilityHint("Drag to resize adjacent panels")
     }

@@ -10,11 +10,118 @@ nonisolated enum SplitDirection: String, Codable, Hashable {
     case vertical
 }
 
-nonisolated enum PanelSurfaceDescriptor: Codable, Hashable {
-    case terminal(sessionID: TerminalSession.ID)
-    case editor(documentID: DocumentSession.ID)
-    case preview(previewID: PreviewState.ID)
+nonisolated enum PanelViewportDescriptor: Codable, Hashable {
+    case session(sessionID: WorkspaceSession.ID)
     case empty
+}
+
+typealias PanelSurfaceDescriptor = PanelViewportDescriptor
+
+extension PanelViewportDescriptor {
+    var sessionID: WorkspaceSession.ID? {
+        switch self {
+        case .session(let sessionID):
+            return sessionID
+        case .empty:
+            return nil
+        }
+    }
+}
+
+extension PanelViewportDescriptor {
+    private enum CodingKeys: String, CodingKey {
+        case session
+        case terminal
+        case editor
+        case preview
+        case empty
+    }
+
+    private enum SessionCodingKeys: String, CodingKey {
+        case sessionID
+        case documentID
+        case previewID
+    }
+
+    nonisolated init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        if container.contains(.empty) {
+            self = .empty
+            return
+        }
+
+        if let sessionID = try Self.decodeSessionID(
+            from: container,
+            caseKey: .session,
+            idKey: .sessionID
+        ) {
+            self = .session(sessionID: sessionID)
+            return
+        }
+
+        if let terminalID = try Self.decodeSessionID(
+            from: container,
+            caseKey: .terminal,
+            idKey: .sessionID
+        ) {
+            self = .session(sessionID: terminalID)
+            return
+        }
+
+        if let documentID = try Self.decodeSessionID(
+            from: container,
+            caseKey: .editor,
+            idKey: .documentID
+        ) {
+            self = .session(sessionID: documentID)
+            return
+        }
+
+        if let previewID = try Self.decodeSessionID(
+            from: container,
+            caseKey: .preview,
+            idKey: .previewID
+        ) {
+            self = .session(sessionID: previewID)
+            return
+        }
+
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Unsupported panel surface descriptor."
+            )
+        )
+    }
+
+    nonisolated func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        switch self {
+        case .session(let sessionID):
+            var sessionContainer = container.nestedContainer(
+                keyedBy: SessionCodingKeys.self,
+                forKey: .session
+            )
+            try sessionContainer.encode(sessionID, forKey: .sessionID)
+        case .empty:
+            _ = container.nestedContainer(keyedBy: SessionCodingKeys.self, forKey: .empty)
+        }
+    }
+
+    private nonisolated static func decodeSessionID(
+        from container: KeyedDecodingContainer<CodingKeys>,
+        caseKey: CodingKeys,
+        idKey: SessionCodingKeys
+    ) throws -> WorkspaceSession.ID? {
+        guard container.contains(caseKey) else {
+            return nil
+        }
+
+        let nestedContainer = try container.nestedContainer(keyedBy: SessionCodingKeys.self, forKey: caseKey)
+        return try nestedContainer.decode(WorkspaceSession.ID.self, forKey: idKey)
+    }
 }
 
 nonisolated struct PanelNode: Identifiable, Codable, Hashable {

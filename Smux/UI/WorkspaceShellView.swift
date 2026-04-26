@@ -14,8 +14,12 @@ struct WorkspaceShellView: View {
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
+    @ObservedObject var workspaceSessionStore: WorkspaceSessionStore
     var commandRouter: AppCommandRouter
     var onOpenWorkspace: () -> Void = {}
+    @State private var isLeftRailCollapsed = false
+    @State private var leftRailWidth = WorkspaceShellMetrics.defaultLeftRailWidth
+    @State private var leftRailDragStartWidth: CGFloat?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -28,18 +32,24 @@ struct WorkspaceShellView: View {
                 visibleNotifications: visibleLeftRailNotifications,
                 fileTreeRoot: fileTreeStore.root,
                 selectedFileTreeNodeID: fileTreeStore.selectedNodeID,
+                isCollapsed: isLeftRailCollapsed,
                 onExpandFileTreeNode: expandFileTreeNode,
                 onSelectFileTreeNode: selectFileTreeNode,
                 onSelectPanel: { commandRouter.focus(panelID: $0) },
                 onOpenWorkspace: onOpenWorkspace,
+                onToggleCollapsed: {
+                    isLeftRailCollapsed.toggle()
+                },
                 onSelectWorkspace: selectWorkspace,
                 onCloseWorkspace: closeWorkspace,
                 onOpenRecentWorkspace: openRecentWorkspace,
                 onSelectNotification: activateNotification,
                 onAcknowledgeNotification: acknowledgeNotification
             )
+            .frame(width: isLeftRailCollapsed ? WorkspaceShellMetrics.collapsedLeftRailWidth : leftRailWidth)
 
-            Divider()
+            WorkspaceShellResizeHandle(isActive: !isLeftRailCollapsed)
+                .gesture(leftRailResizeGesture)
 
             SplitPanelView(
                 node: panelStore.rootNode,
@@ -53,6 +63,7 @@ struct WorkspaceShellView: View {
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,
                 terminalPreferencesStore: terminalPreferencesStore,
+                workspaceSessionStore: workspaceSessionStore,
                 notifications: activeWorkspaceNotifications,
                 onFocus: { commandRouter.focus(panelID: $0) },
                 onSplit: { panelID, direction in
@@ -105,6 +116,70 @@ struct WorkspaceShellView: View {
         .task(id: workspaceStore.activeWorkspace?.id) {
             await loadFileTreeForActiveWorkspace()
         }
+    }
+
+    private var leftRailResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard !isLeftRailCollapsed else {
+                    return
+                }
+
+                if leftRailDragStartWidth == nil {
+                    leftRailDragStartWidth = leftRailWidth
+                }
+
+                let proposedWidth = (leftRailDragStartWidth ?? leftRailWidth) + value.translation.width
+                leftRailWidth = WorkspaceShellMetrics.clampedLeftRailWidth(proposedWidth)
+            }
+            .onEnded { _ in
+                leftRailDragStartWidth = nil
+            }
+    }
+}
+
+private enum WorkspaceShellMetrics {
+    static let collapsedLeftRailWidth: CGFloat = 54
+    static let defaultLeftRailWidth: CGFloat = 300
+    static let minimumLeftRailWidth: CGFloat = 220
+    static let maximumLeftRailWidth: CGFloat = 420
+
+    static func clampedLeftRailWidth(_ width: CGFloat) -> CGFloat {
+        min(max(width, minimumLeftRailWidth), maximumLeftRailWidth)
+    }
+}
+
+private struct WorkspaceShellResizeHandle: View {
+    var isActive: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(isHovering && isActive ? 0.22 : 0.08))
+                .frame(width: 1)
+
+            Capsule()
+                .fill(Color.secondary.opacity(isHovering && isActive ? 0.35 : 0))
+                .frame(width: 3, height: 48)
+        }
+        .frame(width: isActive ? 9 : 1)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovering = hovering
+            guard isActive else {
+                return
+            }
+
+            if hovering {
+                NSCursor.resizeLeftRight.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .accessibilityLabel("Resize sidebar")
+        .accessibilityHint("Drag to resize the session sidebar")
     }
 }
 
@@ -254,6 +329,7 @@ private extension WorkspaceShellView {
             .map { panel in
                 LeftRailPanelTabPresentation(
                     panel: panel,
+                    session: panel.surface.sessionID.flatMap { workspaceSessionStore.session(for: $0) },
                     workspace: workspaceStore.activeWorkspace,
                     notifications: activeWorkspaceNotifications
                 )

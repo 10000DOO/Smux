@@ -8,15 +8,15 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let terminalID = UUID()
         let previewID = UUID()
 
-        let first = PanelNode.leaf(id: firstPanelID, surface: .terminal(sessionID: terminalID))
-        let second = PanelNode.leaf(id: secondPanelID, surface: .preview(previewID: previewID))
+        let first = PanelNode.leaf(id: firstPanelID, surface: .session(sessionID: terminalID))
+        let second = PanelNode.leaf(id: secondPanelID, surface: .session(sessionID: previewID))
         let split = PanelNode.split(direction: .horizontal, ratio: 1.2, first: first, second: second)
 
         XCTAssertTrue(first.isLeaf)
         XCTAssertNil(first.direction)
         XCTAssertNil(first.ratio)
         XCTAssertTrue(first.children.isEmpty)
-        XCTAssertEqual(first.surface, .terminal(sessionID: terminalID))
+        XCTAssertEqual(first.surface, .session(sessionID: terminalID))
 
         XCTAssertTrue(split.isSplit)
         XCTAssertEqual(split.direction, .horizontal)
@@ -64,11 +64,11 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             id: splitID,
             direction: .horizontal,
             first: .leaf(id: firstPanelID, surface: .empty),
-            second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
+            second: .leaf(id: secondPanelID, surface: .session(sessionID: documentID))
         )
 
         XCTAssertEqual(tree.surface(forLeaf: firstPanelID), .empty)
-        XCTAssertEqual(tree.surface(forLeaf: secondPanelID), .editor(documentID: documentID))
+        XCTAssertEqual(tree.surface(forLeaf: secondPanelID), .session(sessionID: documentID))
         XCTAssertNil(tree.surface(forLeaf: splitID))
         XCTAssertNil(tree.surface(forLeaf: nil))
         XCTAssertNil(tree.surface(forLeaf: UUID()))
@@ -83,7 +83,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             rootNode: .split(
                 direction: .horizontal,
                 first: .leaf(id: firstPanelID, surface: .empty),
-                second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
+                second: .leaf(id: secondPanelID, surface: .session(sessionID: documentID))
             ),
             focusedPanelID: firstPanelID
         )
@@ -92,7 +92,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         store.focus(panelID: secondPanelID)
 
-        XCTAssertEqual(store.focusedSurface, .editor(documentID: documentID))
+        XCTAssertEqual(store.focusedSurface, .session(sessionID: documentID))
     }
 
     func testPanelNodeFactoryClampsLowRatioAndLimitsSplitChildren() {
@@ -104,7 +104,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             direction: .vertical,
             ratio: -1,
             children: [first, second, third],
-            surface: .terminal(sessionID: UUID())
+            surface: .session(sessionID: UUID())
         )
 
         XCTAssertEqual(split.normalizedRatio, 0.1)
@@ -125,7 +125,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         let replaced = split.replacingSurface(
             panelID: splitID,
-            with: .terminal(sessionID: UUID())
+            with: .session(sessionID: UUID())
         )
 
         XCTAssertEqual(replaced, split)
@@ -164,7 +164,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let directSplit = PanelNode.split(
             direction: .horizontal,
             first: .leaf(id: firstPanelID, surface: .empty),
-            second: .leaf(id: secondPanelID, surface: .terminal(sessionID: UUID()))
+            second: .leaf(id: secondPanelID, surface: .session(sessionID: UUID()))
         )
 
         let directRemoval = directSplit.removingLeaf(panelID: firstPanelID)
@@ -180,7 +180,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             second: .split(
                 direction: .vertical,
                 first: .leaf(id: secondPanelID, surface: .empty),
-                second: .leaf(id: thirdPanelID, surface: .preview(previewID: UUID()))
+                second: .leaf(id: thirdPanelID, surface: .session(sessionID: UUID()))
             )
         )
 
@@ -218,13 +218,13 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let editorID = UUID()
         let store = PanelStore(rootNode: .leaf(id: rootID, surface: .empty))
 
-        store.splitFocusedPanel(direction: .vertical, surface: .editor(documentID: editorID))
+        store.splitFocusedPanel(direction: .vertical, surface: .session(sessionID: editorID))
 
         XCTAssertTrue(store.rootNode.isSplit)
         XCTAssertEqual(store.rootNode.direction, .vertical)
         XCTAssertEqual(store.rootNode.children.count, 2)
         XCTAssertEqual(store.rootNode.children.first?.id, rootID)
-        XCTAssertEqual(store.rootNode.children.last?.surface, .editor(documentID: editorID))
+        XCTAssertEqual(store.rootNode.children.last?.surface, .session(sessionID: editorID))
         XCTAssertEqual(store.focusedPanelID, store.rootNode.children.last?.id)
     }
 
@@ -236,7 +236,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             rootNode: .split(
                 direction: .horizontal,
                 first: .leaf(id: firstPanelID, surface: .empty),
-                second: .leaf(id: secondPanelID, surface: .terminal(sessionID: UUID()))
+                second: .leaf(id: secondPanelID, surface: .session(sessionID: UUID()))
             ),
             focusedPanelID: firstPanelID
         )
@@ -251,7 +251,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     @MainActor
     func testPanelStoreClosingLastLeafKeepsEmptyLeafFocused() {
         let rootID = UUID()
-        let store = PanelStore(rootNode: .leaf(id: rootID, surface: .terminal(sessionID: UUID())))
+        let store = PanelStore(rootNode: .leaf(id: rootID, surface: .session(sessionID: UUID())))
 
         store.closeFocusedPanel()
 
@@ -265,7 +265,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let singleEmptyStore = PanelStore(rootNode: .leaf(surface: .empty))
         XCTAssertFalse(singleEmptyStore.canCloseFocusedPanel)
 
-        let singleTerminalStore = PanelStore(rootNode: .leaf(surface: .terminal(sessionID: UUID())))
+        let singleTerminalStore = PanelStore(rootNode: .leaf(surface: .session(sessionID: UUID())))
         XCTAssertTrue(singleTerminalStore.canCloseFocusedPanel)
 
         let splitEmptyStore = PanelStore(
@@ -284,10 +284,10 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let terminalID = UUID()
         let store = PanelStore(rootNode: .leaf(id: rootID, surface: .empty))
 
-        store.replaceFocusedPanel(with: .terminal(sessionID: terminalID))
+        store.replaceFocusedPanel(with: .session(sessionID: terminalID))
 
         XCTAssertEqual(store.rootNode.id, rootID)
-        XCTAssertEqual(store.rootNode.surface, .terminal(sessionID: terminalID))
+        XCTAssertEqual(store.rootNode.surface, .session(sessionID: terminalID))
         XCTAssertEqual(store.focusedPanelID, rootID)
     }
 
@@ -316,11 +316,11 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let store = PanelStore(rootNode: split)
 
         store.focus(panelID: splitID)
-        store.replaceFocusedPanel(with: .terminal(sessionID: terminalID))
+        store.replaceFocusedPanel(with: .session(sessionID: terminalID))
 
         XCTAssertEqual(store.focusedPanelID, firstPanelID)
         XCTAssertEqual(store.rootNode.kind, .split)
-        XCTAssertEqual(store.rootNode.children.first?.surface, .terminal(sessionID: terminalID))
+        XCTAssertEqual(store.rootNode.children.first?.surface, .session(sessionID: terminalID))
     }
 
     @MainActor
@@ -567,8 +567,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let panelTree = PanelNode.split(
             direction: .horizontal,
             ratio: 0.37,
-            first: .leaf(id: firstPanelID, surface: .terminal(sessionID: terminalID)),
-            second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
+            first: .leaf(id: firstPanelID, surface: .session(sessionID: terminalID)),
+            second: .leaf(id: secondPanelID, surface: .session(sessionID: documentID))
         )
         let snapshot = WorkspaceSnapshot(workspace: workspace, panelTree: panelTree)
 
@@ -618,6 +618,115 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(snapshot.leftRailState.selectedWorkspaceID, workspace.id)
     }
 
+    func testWorkspaceSnapshotMigratesLegacySessionArrays() {
+        let workspaceID = UUID()
+        let terminal = makeTerminalSession(workspaceID: workspaceID)
+        let document = DocumentSession.make(
+            workspaceID: workspaceID,
+            url: URL(fileURLWithPath: "/tmp/Migrated/README.md")
+        )
+        let preview = PreviewState(
+            id: UUID(),
+            sourceDocumentID: document.id,
+            renderVersion: 2,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<p>Migrated</p>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: 1,
+            scrollAnchor: "intro"
+        )
+
+        let migratedSessions = WorkspaceSnapshot.migratedWorkspaceSessions(
+            sessions: [terminal],
+            documents: [document],
+            previews: [preview]
+        )
+
+        XCTAssertEqual(migratedSessions, [
+            WorkspaceSession(terminal: terminal, id: terminal.id),
+            WorkspaceSession(
+                document: document,
+                id: document.id,
+                createdAt: Date(timeIntervalSince1970: 0)
+            ),
+            WorkspaceSession(
+                preview: preview,
+                workspaceID: workspaceID,
+                id: preview.id,
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
+        ])
+    }
+
+    func testWorkspaceSnapshotDecodesLegacyPayloadWithoutWorkspaceSessions() throws {
+        let workspaceID = UUID()
+        let terminal = makeTerminalSession(workspaceID: workspaceID)
+        let document = DocumentSession.make(
+            workspaceID: workspaceID,
+            url: URL(fileURLWithPath: "/tmp/Legacy/README.md")
+        )
+        let preview = PreviewState(
+            id: UUID(),
+            sourceDocumentID: document.id,
+            renderVersion: 1,
+            sanitizedMarkdown: nil,
+            mermaidBlocks: [],
+            errors: [],
+            zoom: 1,
+            scrollAnchor: nil
+        )
+        let legacySnapshot = LegacyWorkspaceSnapshot(
+            schemaVersion: WorkspaceSnapshot.currentSchemaVersion,
+            workspaceID: workspaceID,
+            rootBookmark: nil,
+            panelTree: .leaf(surface: .session(sessionID: terminal.id)),
+            sessions: [terminal],
+            documents: [document],
+            previews: [preview],
+            leftRailState: .default(workspaceID: workspaceID)
+        )
+
+        let data = try JSONEncoder().encode(legacySnapshot)
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self, from: data)
+
+        XCTAssertEqual(decoded.sessions, [terminal])
+        XCTAssertEqual(decoded.documents, [document])
+        XCTAssertEqual(decoded.previews, [preview])
+        XCTAssertEqual(decoded.workspaceSessions, [
+            WorkspaceSession(terminal: terminal, id: terminal.id),
+            WorkspaceSession(
+                document: document,
+                id: document.id,
+                createdAt: Date(timeIntervalSince1970: 0)
+            ),
+            WorkspaceSession(
+                preview: preview,
+                workspaceID: workspaceID,
+                id: preview.id,
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
+        ])
+    }
+
+    func testPanelSurfaceDescriptorDecodesLegacyFeatureCasesAsSessionReferences() throws {
+        let terminalID = UUID()
+        let documentID = UUID()
+        let previewID = UUID()
+
+        XCTAssertEqual(
+            try decodePanelSurfaceDescriptor(from: #"{"terminal":{"sessionID":"\#(terminalID.uuidString)"}}"#),
+            .session(sessionID: terminalID)
+        )
+        XCTAssertEqual(
+            try decodePanelSurfaceDescriptor(from: #"{"editor":{"documentID":"\#(documentID.uuidString)"}}"#),
+            .session(sessionID: documentID)
+        )
+        XCTAssertEqual(
+            try decodePanelSurfaceDescriptor(from: #"{"preview":{"previewID":"\#(previewID.uuidString)"}}"#),
+            .session(sessionID: previewID)
+        )
+    }
+
     func testFileBackedWorkspaceRepositoryRoundTripsSnapshot() async throws {
         let baseURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("SmuxRepositoryTests-\(UUID().uuidString)", isDirectory: true)
@@ -631,7 +740,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let panelTree = PanelNode.leaf(
             id: UUID(),
-            surface: .terminal(sessionID: TerminalSession.ID())
+            surface: .session(sessionID: TerminalSession.ID())
         )
         let snapshot = WorkspaceSnapshot(workspace: workspace, panelTree: panelTree)
 
@@ -754,7 +863,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let activePanelTree = PanelNode.leaf(
             id: UUID(),
-            surface: .terminal(sessionID: TerminalSession.ID())
+            surface: .session(sessionID: TerminalSession.ID())
         )
         let firstPanelID = PanelNode.ID()
         let secondPanelID = PanelNode.ID()
@@ -778,7 +887,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let restoredPanelTree = PanelNode.split(
             direction: .horizontal,
             first: .leaf(id: firstPanelID, surface: .empty),
-            second: .leaf(id: secondPanelID, surface: .preview(previewID: previewID))
+            second: .leaf(id: secondPanelID, surface: .session(sessionID: previewID))
         )
         let restoredSnapshot = WorkspaceSnapshot(
             workspace: restoredWorkspace,
@@ -912,7 +1021,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let repository = ThrowingLoadWorkspaceRepository()
         let workspaceStore = WorkspaceStore()
         let panelStore = PanelStore(
-            rootNode: .leaf(surface: .terminal(sessionID: TerminalSession.ID()))
+            rootNode: .leaf(surface: .session(sessionID: TerminalSession.ID()))
         )
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
@@ -941,17 +1050,28 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
         let documentSessionStore = DocumentSessionStore()
         let previewSessionStore = PreviewSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             documentSessionStore: documentSessionStore,
-            previewSessionStore: previewSessionStore
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.openDocument(documentURL, preferredSurface: .split)
 
-        guard case let .editor(documentID) = panelStore.rootNode.children.first?.surface,
-              case let .preview(previewID) = panelStore.rootNode.children.last?.surface
+        guard
+            let editorSession = workspaceSession(
+                from: panelStore.rootNode.children.first?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .editor(documentID) = editorSession.content,
+            let previewSession = workspaceSession(
+                from: panelStore.rootNode.children.last?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .preview(previewID, previewDocumentID) = previewSession.content
         else {
             XCTFail("Expected split editor and preview surfaces.")
             return
@@ -962,6 +1082,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(session?.url, documentURL)
         XCTAssertEqual(session?.language, .markdown)
         XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
+        XCTAssertEqual(previewDocumentID, documentID)
     }
 
     @MainActor
@@ -975,10 +1096,12 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let workspaceStore = WorkspaceStore(activeWorkspace: workspace)
         let panelStore = PanelStore(rootNode: .leaf(id: existingPanelID, surface: .empty))
         let documentSessionStore = DocumentSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
-            documentSessionStore: documentSessionStore
+            documentSessionStore: documentSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.openDocumentInNewPanel(
@@ -990,7 +1113,13 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(panelStore.rootNode.direction, .horizontal)
         XCTAssertEqual(panelStore.rootNode.children.first?.id, existingPanelID)
 
-        guard case let .editor(documentID) = panelStore.rootNode.children.last?.surface else {
+        guard
+            let editorSession = workspaceSession(
+                from: panelStore.rootNode.children.last?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .editor(documentID) = editorSession.content
+        else {
             XCTFail("Expected a new editor panel.")
             return
         }
@@ -1012,11 +1141,13 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
         let documentSessionStore = DocumentSessionStore()
         let previewSessionStore = PreviewSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             documentSessionStore: documentSessionStore,
-            previewSessionStore: previewSessionStore
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.openDocumentInNewPanel(
@@ -1025,14 +1156,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             splitDirection: .horizontal
         )
 
-        guard case let .preview(previewID) = panelStore.rootNode.children.last?.surface,
-              let documentID = previewSessionStore.sourceDocumentID(for: previewID)
+        guard
+            let previewSession = workspaceSession(
+                from: panelStore.rootNode.children.last?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .preview(previewID, documentID) = previewSession.content
         else {
             XCTFail("Expected a new preview panel bound to a document.")
             return
         }
 
         XCTAssertEqual(panelStore.focusedPanelID, panelStore.rootNode.children.last?.id)
+        XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
         XCTAssertEqual(documentSessionStore.session(for: documentID)?.url, documentURL)
     }
 
@@ -1055,11 +1191,13 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let documentSessionStore = DocumentSessionStore()
         let previewSessionStore = PreviewSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: WorkspaceStore(activeWorkspace: workspace),
             panelStore: panelStore,
             documentSessionStore: documentSessionStore,
-            previewSessionStore: previewSessionStore
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.openDocument(
@@ -1069,14 +1207,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
 
         XCTAssertEqual(panelStore.rootNode.children.first?.surface, .empty)
-        guard case let .preview(previewID) = panelStore.rootNode.children.last?.surface,
-              let documentID = previewSessionStore.sourceDocumentID(for: previewID)
+        guard
+            let previewSession = workspaceSession(
+                from: panelStore.rootNode.children.last?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .preview(previewID, documentID) = previewSession.content
         else {
             XCTFail("Expected requested panel to become a preview.")
             return
         }
 
         XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
+        XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
         XCTAssertEqual(documentSessionStore.session(for: documentID)?.url, documentURL)
     }
 
@@ -1171,15 +1314,23 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let terminalSessionController = TerminalSessionController(
             ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
         )
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
-            terminalSessionController: terminalSessionController
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.createTerminal(in: workspace.id)
 
-        guard case let .terminal(sessionID) = panelStore.rootNode.surface else {
+        guard
+            let workspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(sessionID) = workspaceSession.content
+        else {
             XCTFail("Expected terminal surface.")
             return
         }
@@ -1213,21 +1364,83 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let terminalSessionController = TerminalSessionController(
             ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
         )
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: WorkspaceStore(activeWorkspace: workspace),
             panelStore: panelStore,
-            terminalSessionController: terminalSessionController
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.createTerminal(in: workspace.id, replacingPanel: secondPanelID)
 
         XCTAssertEqual(panelStore.rootNode.children.first?.surface, .empty)
-        guard case let .terminal(sessionID) = panelStore.rootNode.children.last?.surface else {
+        guard
+            let workspaceSession = workspaceSession(
+                from: panelStore.rootNode.children.last?.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(sessionID) = workspaceSession.content
+        else {
             XCTFail("Expected terminal surface in requested panel.")
             return
         }
         XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
         XCTAssertEqual(terminalSessionController.session(for: sessionID)?.processID, 1357)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorReplacingTerminalPanelCleansDetachedSession() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/RefreshTerminalWorkspace")
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let client = WorkspacePanelMockPTYClient(processID: 3579)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
+        )
+
+        try await coordinator.createTerminal(in: workspace.id)
+        guard
+            let originalWorkspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(originalTerminalID) = originalWorkspaceSession.content
+        else {
+            XCTFail("Expected original terminal surface.")
+            return
+        }
+
+        try await coordinator.createTerminal(in: workspace.id, replacingPanel: panelStore.rootNode.id)
+
+        guard
+            let replacementWorkspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(replacementTerminalID) = replacementWorkspaceSession.content
+        else {
+            XCTFail("Expected replacement terminal surface.")
+            return
+        }
+
+        XCTAssertNotEqual(replacementWorkspaceSession.id, originalWorkspaceSession.id)
+        XCTAssertNotEqual(replacementTerminalID, originalTerminalID)
+        XCTAssertNil(workspaceSessionStore.session(for: originalWorkspaceSession.id))
+        XCTAssertNil(terminalSessionController.session(for: originalTerminalID))
+        XCTAssertNotNil(workspaceSessionStore.session(for: replacementWorkspaceSession.id))
+        XCTAssertNotNil(terminalSessionController.session(for: replacementTerminalID))
+        XCTAssertEqual(client.startRequests.count, 2)
+        XCTAssertEqual(client.terminateCallCount, 1)
     }
 
     @MainActor
@@ -1241,14 +1454,22 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let terminalSessionController = TerminalSessionController(
             ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
         )
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             workspaceStore: WorkspaceStore(activeWorkspace: workspace),
             panelStore: panelStore,
-            terminalSessionController: terminalSessionController
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         try await coordinator.createTerminal(in: workspace.id)
-        guard case let .terminal(sessionID) = panelStore.rootNode.surface else {
+        guard
+            let workspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(sessionID) = workspaceSession.content
+        else {
             XCTFail("Expected terminal surface.")
             return
         }
@@ -1257,6 +1478,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertNil(terminalSessionController.session(for: sessionID))
+        XCTAssertNil(workspaceSessionStore.session(for: workspaceSession.id))
         XCTAssertEqual(client.terminateCallCount, 1)
     }
 
@@ -1264,11 +1486,22 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     func testWorkspaceCoordinatorCloseFocusedPreviewCleansPreviewStateAndBinding() {
         let previewID = PreviewState.ID()
         let documentID = DocumentSession.ID()
-        let panelStore = PanelStore(rootNode: .leaf(surface: .preview(previewID: previewID)))
+        let workspaceID = Workspace.ID()
+        let workspaceSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .preview,
+            content: .preview(previewID: previewID, sourceDocumentID: documentID),
+            title: "Preview",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .session(sessionID: workspaceSession.id)))
         let previewSessionStore = PreviewSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             panelStore: panelStore,
-            previewSessionStore: previewSessionStore
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
         let state = PreviewState(
             id: previewID,
@@ -1280,6 +1513,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             zoom: PreviewState.defaultZoom,
             scrollAnchor: nil
         )
+        workspaceSessionStore.upsertSession(workspaceSession)
         previewSessionStore.bind(previewID: previewID, sourceDocumentID: documentID)
         previewSessionStore.upsertState(state, for: previewID)
 
@@ -1288,6 +1522,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertNil(previewSessionStore.state(for: previewID))
         XCTAssertNil(previewSessionStore.sourceDocumentID(for: previewID))
+        XCTAssertNil(workspaceSessionStore.session(for: workspaceSession.id))
     }
 
     @MainActor
@@ -1302,18 +1537,23 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceID: workspace.id,
             url: workspace.rootURL.appendingPathComponent("Shared.md")
         )
-        let panelStore = PanelStore(rootNode: .leaf(surface: .editor(documentID: documentID)))
+        let workspaceSession = WorkspaceSession(document: documentSession, id: WorkspaceSession.ID())
+        let panelStore = PanelStore(rootNode: .leaf(surface: .session(sessionID: workspaceSession.id)))
         let documentSessionStore = DocumentSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
             panelStore: panelStore,
-            documentSessionStore: documentSessionStore
+            documentSessionStore: documentSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
         documentSessionStore.upsertSession(documentSession)
+        workspaceSessionStore.upsertSession(workspaceSession)
 
         coordinator.closeFocusedPanel()
 
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertEqual(documentSessionStore.session(for: documentID), documentSession)
+        XCTAssertNil(workspaceSessionStore.session(for: workspaceSession.id))
     }
 
     @MainActor
@@ -1330,7 +1570,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let panelTree = PanelNode.leaf(
             id: UUID(),
-            surface: .editor(documentID: DocumentSession.ID())
+            surface: .session(sessionID: DocumentSession.ID())
         )
         let repository = InMemoryWorkspaceRepository()
         let workspaceStore = WorkspaceStore(
@@ -1821,6 +2061,70 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             closeFocusedCount += 1
         }
     }
+}
+
+@MainActor
+private func workspaceSession(
+    from surface: PanelSurfaceDescriptor?,
+    in store: WorkspaceSessionStore,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) -> WorkspaceSession? {
+    guard case let .session(sessionID) = surface else {
+        XCTFail("Expected a workspace session surface.", file: file, line: line)
+        return nil
+    }
+
+    guard let session = store.session(for: sessionID) else {
+        XCTFail("Expected workspace session store to contain panel session.", file: file, line: line)
+        return nil
+    }
+
+    return session
+}
+
+private func makeTerminalSession(
+    id: TerminalSession.ID = TerminalSession.ID(),
+    workspaceID: Workspace.ID,
+    workingDirectory: URL? = nil,
+    processID: Int32? = nil,
+    status: TerminalSessionStatus = .running,
+    title: String = "Terminal",
+    createdAt: Date = Date(timeIntervalSince1970: 0)
+) -> TerminalSession {
+    TerminalSession(
+        id: id,
+        workspaceID: workspaceID,
+        workingDirectory: workingDirectory ?? URL(fileURLWithPath: "/tmp/Workspace-\(workspaceID.uuidString)"),
+        processID: processID,
+        shell: nil,
+        command: [],
+        status: status,
+        title: title,
+        createdAt: createdAt,
+        lastActivityAt: createdAt,
+        lastOutputSummary: nil,
+        exitCode: nil,
+        failureMessage: nil
+    )
+}
+
+private func decodePanelSurfaceDescriptor(from json: String) throws -> PanelSurfaceDescriptor {
+    try JSONDecoder().decode(
+        PanelSurfaceDescriptor.self,
+        from: Data(json.utf8)
+    )
+}
+
+private struct LegacyWorkspaceSnapshot: Codable, Hashable {
+    var schemaVersion: Int
+    var workspaceID: Workspace.ID
+    var rootBookmark: Data?
+    var panelTree: PanelNode?
+    var sessions: [TerminalSession]
+    var documents: [DocumentSession]
+    var previews: [PreviewState]
+    var leftRailState: LeftRailState
 }
 
 private final class WorkspacePanelMockPTYClient: PTYClient {

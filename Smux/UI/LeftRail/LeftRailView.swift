@@ -9,10 +9,12 @@ struct LeftRailView: View {
     var visibleNotifications: [WorkspaceNotification] = []
     var fileTreeRoot: FileTreeNode? = nil
     var selectedFileTreeNodeID: FileTreeNode.ID? = nil
+    var isCollapsed = false
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectPanel: (PanelNode.ID) -> Void = { _ in }
     var onOpenWorkspace: () -> Void = {}
+    var onToggleCollapsed: () -> Void = {}
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
     var onCloseWorkspace: (Workspace.ID) -> Void = { _ in }
     var onOpenRecentWorkspace: (RecentWorkspace) -> Void = { _ in }
@@ -20,42 +22,67 @@ struct LeftRailView: View {
     var onAcknowledgeNotification: (WorkspaceNotification.ID) -> Void = { _ in }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            railToolbar
-
-            workspaceSummary
-
-            Divider()
-
-            panelsSummary
-
-            Divider()
-
-            workspaceList
-
-            Divider()
-
-            fileTreeSection
-
-            Spacer()
-
-            latestNotifications
+        Group {
+            if isCollapsed {
+                collapsedBody
+            } else {
+                expandedBody
+            }
         }
-        .padding(12)
-        .frame(width: 260)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 private extension LeftRailView {
-    var railToolbar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 24, height: 24)
-                .foregroundStyle(.secondary)
-                .help("Left rail")
+    var expandedBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            expandedHeader
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    sessionSection
+                    workspaceSection
+                    fileTreeSection
+                    notificationSection
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 14)
+            }
+        }
+    }
+
+    var collapsedBody: some View {
+        VStack(spacing: 10) {
+            railIconButton(systemImage: "sidebar.left", help: "Expand sidebar", action: onToggleCollapsed)
+                .padding(.top, 10)
+
+            railIconButton(systemImage: "plus", help: "Add workspace", action: onOpenWorkspace)
+
+            Divider()
+                .padding(.horizontal, 10)
+
+            ForEach(panelTabs) { panelTab in
+                Button {
+                    onSelectPanel(panelTab.id)
+                } label: {
+                    Image(systemName: panelTab.systemImage)
+                        .font(.system(size: 14, weight: panelTab.isFocused ? .semibold : .regular))
+                        .frame(width: 32, height: 32)
+                        .foregroundStyle(panelTab.isFocused ? Color.primary : Color.secondary)
+                        .background {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(panelTab.isFocused ? Color.secondary.opacity(0.14) : Color.clear)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            compactBadge(count: panelTab.badgeCount)
+                        }
+                }
+                .buttonStyle(.plain)
+                .help(panelTab.title)
+            }
+
+            Spacer(minLength: 12)
 
             Button {
                 if let notificationID = visibleNotifications.first?.id {
@@ -63,94 +90,152 @@ private extension LeftRailView {
                 }
             } label: {
                 Image(systemName: "bell")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 24, height: 24)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 32, height: 32)
+                    .foregroundStyle(visibleNotifications.isEmpty ? Color.secondary.opacity(0.45) : Color.secondary)
                     .overlay(alignment: .topTrailing) {
-                        notificationToolbarBadge
+                        compactBadge(count: notificationSummary.totalCount)
                     }
             }
             .buttonStyle(.plain)
             .disabled(visibleNotifications.isEmpty)
-            .foregroundStyle(visibleNotifications.isEmpty ? .tertiary : .secondary)
-            .help("Open latest notification")
+            .help("Latest notification")
+            .padding(.bottom, 10)
+        }
+    }
 
-            Spacer()
-
-            Button(action: onOpenWorkspace) {
-                Image(systemName: "folder.badge.plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 24)
+    var expandedHeader: some View {
+        HStack(spacing: 8) {
+            Button(action: onToggleCollapsed) {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
-            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
-            .foregroundStyle(Color.accentColor)
-            .help("Open workspace")
-            .accessibilityLabel("Open workspace")
-        }
-    }
+            .foregroundStyle(.secondary)
+            .help("Collapse sidebar")
 
-    @ViewBuilder
-    var notificationToolbarBadge: some View {
-        if notificationSummary.totalCount > 0 {
-            Circle()
-                .fill(Color.red)
-                .frame(width: 7, height: 7)
-                .offset(x: 1, y: -1)
-        }
-    }
-
-    var workspaceSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Workspace", systemImage: "macwindow")
-                .font(.subheadline)
-            Text(workspace?.displayName ?? "No Workspace")
-                .font(.headline)
-                .lineLimit(1)
-            Text(workspace?.rootURL.path ?? "Smux")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            if let gitBranch = workspace?.gitBranch {
-                Label(gitBranch, systemImage: "arrow.triangle.branch")
-                    .font(.caption)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(workspace?.displayName ?? "No Workspace")
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Text(workspaceSubtitle)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+
+            Spacer(minLength: 8)
+
+            Button(action: onOpenWorkspace) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .background(Color.secondary.opacity(0.11), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(.primary)
+            .help("Add workspace")
+            .accessibilityLabel("Add workspace")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55))
+    }
+
+    var workspaceSubtitle: String {
+        if let gitBranch = workspace?.gitBranch {
+            return gitBranch
+        }
+
+        return workspace?.rootURL.path ?? "Smux"
+    }
+
+    var sessionSection: some View {
+        railSection(title: "Sessions", count: panelTabs.count) {
+            if panelTabs.isEmpty {
+                emptyLine("No sessions")
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(panelTabs) { panelTab in
+                        sessionRow(panelTab)
+                    }
+                }
+            }
         }
     }
 
-    var workspaceList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Open", systemImage: "sidebar.left")
-                .font(.subheadline)
+    func sessionRow(_ panelTab: LeftRailPanelTabPresentation) -> some View {
+        Button {
+            onSelectPanel(panelTab.id)
+        } label: {
+            HStack(spacing: 9) {
+                Rectangle()
+                    .fill(panelTab.isFocused ? Color.accentColor : Color.clear)
+                    .frame(width: 3)
+                    .clipShape(Capsule())
 
+                Image(systemName: panelTab.systemImage)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 18)
+                    .foregroundStyle(panelTab.isFocused ? Color.primary : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(panelTab.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(panelTab.latestNotificationMessage ?? panelTab.metadataText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 6)
+                sessionBadge(count: panelTab.badgeCount)
+            }
+            .padding(.vertical, 7)
+            .padding(.trailing, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(panelTab.isFocused ? Color.secondary.opacity(0.12) : Color.clear)
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .accessibilityLabel(panelTab.title)
+    }
+
+    var workspaceSection: some View {
+        railSection(title: "Workspaces", count: workspaces.count) {
             if workspaces.isEmpty {
-                Text("No open workspaces")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                emptyLine("No open workspaces")
             } else {
-                ForEach(workspaces) { listedWorkspace in
-                    workspaceRow(listedWorkspace)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(workspaces) { listedWorkspace in
+                        workspaceRow(listedWorkspace)
+                    }
                 }
             }
 
             if !recentWorkspaces.isEmpty {
-                Text("Recent")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Recent")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 6)
 
-                ForEach(recentWorkspaces.prefix(3)) { recentWorkspace in
-                    Button {
-                        onOpenRecentWorkspace(recentWorkspace)
-                    } label: {
-                        Label(recentWorkspace.displayName, systemImage: "clock")
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(recentWorkspaces.prefix(3)) { recentWorkspace in
+                        Button {
+                            onOpenRecentWorkspace(recentWorkspace)
+                        } label: {
+                            Label(recentWorkspace.displayName, systemImage: "clock")
+                                .font(.caption)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
             }
         }
@@ -161,11 +246,13 @@ private extension LeftRailView {
             Button {
                 onSelectWorkspace(listedWorkspace.id)
             } label: {
-                Label(
-                    listedWorkspace.displayName,
-                    systemImage: listedWorkspace.id == workspace?.id ? "smallcircle.filled.circle" : "circle"
-                )
-                .lineLimit(1)
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(listedWorkspace.id == workspace?.id ? Color.accentColor : Color.secondary.opacity(0.35))
+                        .frame(width: 6, height: 6)
+                    Text(listedWorkspace.displayName)
+                        .lineLimit(1)
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
@@ -174,118 +261,20 @@ private extension LeftRailView {
                 onCloseWorkspace(listedWorkspace.id)
             } label: {
                 Image(systemName: "xmark")
-                    .frame(width: 14, height: 14)
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 18, height: 18)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.tertiary)
             .help("Close workspace")
         }
         .font(.caption)
         .foregroundStyle(listedWorkspace.id == workspace?.id ? .primary : .secondary)
-    }
-
-    var panelsSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Panels", systemImage: "rectangle.split.3x1")
-                    .font(.subheadline)
-                Spacer()
-                Text("\(panelTabs.count)")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            if panelTabs.isEmpty {
-                Text("No panels")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(panelTabs) { panelTab in
-                            panelTabButton(panelTab)
-                        }
-                    }
-                }
-                .frame(maxHeight: 230, alignment: .topLeading)
-            }
-        }
-    }
-
-    func panelTabButton(_ panelTab: LeftRailPanelTabPresentation) -> some View {
-        Button {
-            onSelectPanel(panelTab.id)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Image(systemName: panelTab.systemImage)
-                        .frame(width: 15)
-
-                    Text(panelTab.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-
-                    Spacer(minLength: 6)
-
-                    panelBadge(count: panelTab.badgeCount, isFocused: panelTab.isFocused)
-                }
-
-                Text(panelTab.metadataText)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .foregroundStyle(panelTab.isFocused ? Color.white.opacity(0.82) : Color.secondary)
-
-                if let latestNotificationMessage = panelTab.latestNotificationMessage {
-                    Text(latestNotificationMessage)
-                        .font(.caption2.weight(.medium))
-                        .lineLimit(1)
-                        .foregroundStyle(panelTab.isFocused ? Color.white : Color.primary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 9)
-            .foregroundStyle(panelTab.isFocused ? Color.white : Color.primary)
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(panelTab.isFocused ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(
-                        panelTab.isFocused ? Color.white.opacity(0.18) : Color(nsColor: .separatorColor).opacity(0.35),
-                        lineWidth: 1
-                    )
-            }
-            .shadow(
-                color: panelTab.isFocused ? Color.accentColor.opacity(0.16) : Color.clear,
-                radius: 5,
-                y: 1
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(panelTab.title)
-    }
-
-    @ViewBuilder
-    func panelBadge(count: Int, isFocused: Bool) -> some View {
-        if count > 0 {
-            Text(count > 9 ? "9+" : "\(count)")
-                .font(.caption2.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(isFocused ? Color.accentColor : Color.white)
-                .frame(minWidth: 18, minHeight: 18)
-                .padding(.horizontal, count > 9 ? 4 : 0)
-                .background(isFocused ? Color.white : Color.red, in: Capsule())
-                .accessibilityLabel("\(count) unacknowledged panel notifications")
-            }
+        .padding(.vertical, 3)
     }
 
     var fileTreeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Files", systemImage: "folder")
-                .font(.subheadline)
-
+        railSection(title: "Files", count: nil) {
             if let fileTreeRoot {
                 LeftRailFileTreeView(
                     rootNode: fileTreeRoot,
@@ -294,54 +283,66 @@ private extension LeftRailView {
                     onSelect: onSelectFileTreeNode
                 )
             } else {
-                fileTreePlaceholder
-            }
-        }
-    }
-
-    var fileTreePlaceholder: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(workspace?.rootURL.lastPathComponent ?? "Workspace", systemImage: "folder")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Label("File tree pending", systemImage: "doc")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-    }
-
-    var latestNotifications: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Label("Latest", systemImage: "bell")
-                    .font(.subheadline)
-                if notificationSummary.totalCount > 0 {
-                    Text("\(notificationSummary.totalCount)")
-                        .font(.caption2.weight(.semibold))
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(workspace?.rootURL.lastPathComponent ?? "Workspace", systemImage: "folder")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Label("File tree pending", systemImage: "doc")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
+        }
+    }
 
+    var notificationSection: some View {
+        railSection(title: "Activity", count: notificationSummary.totalCount) {
             notificationStatusChips
 
             if visibleNotifications.isEmpty {
-                Text("No notifications")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                emptyLine("No notifications")
             } else {
-                ForEach(visibleNotifications) { notification in
-                    notificationRow(notification)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(visibleNotifications) { notification in
+                        notificationRow(notification)
+                    }
                 }
             }
+        }
+    }
+
+    func railSection<Content: View>(
+        title: String,
+        count: Int?,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                if let count {
+                    Text("\(count)")
+                        .font(.caption2.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+            }
+
+            content()
         }
     }
 
     @ViewBuilder
     var notificationStatusChips: some View {
         if !notificationSummary.items.isEmpty {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 ForEach(notificationSummary.items) { item in
                     HStack(spacing: 4) {
                         Image(systemName: item.systemImage)
@@ -355,19 +356,17 @@ private extension LeftRailView {
                     .help(item.title)
                 }
             }
-        } else {
-            EmptyView()
         }
     }
 
     func notificationRow(_ notification: WorkspaceNotification) -> some View {
         let presentation = LeftRailNotificationPresentation(notification: notification)
 
-        return HStack(alignment: .top, spacing: 6) {
+        return HStack(alignment: .top, spacing: 7) {
             Button {
                 onSelectNotification(notification.id)
             } label: {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: 7) {
                     Image(systemName: presentation.systemImage)
                         .frame(width: 14)
                         .foregroundStyle(notification.level.badgeColor)
@@ -381,6 +380,7 @@ private extension LeftRailView {
                                 .foregroundStyle(.tertiary)
                         }
                         Text(presentation.message)
+                            .font(.caption)
                             .lineLimit(2)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -393,17 +393,62 @@ private extension LeftRailView {
                     onAcknowledgeNotification(notification.id)
                 } label: {
                     Image(systemName: "checkmark")
-                        .frame(width: 14, height: 14)
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 16, height: 16)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Acknowledge notification")
             }
         }
-        .font(.caption)
         .foregroundStyle(.secondary)
     }
 
+    func railIconButton(
+        systemImage: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .frame(width: 32, height: 32)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+    }
+
+    @ViewBuilder
+    func sessionBadge(count: Int) -> some View {
+        if count > 0 {
+            Text(count > 9 ? "9+" : "\(count)")
+                .font(.caption2.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .frame(minWidth: 18, minHeight: 18)
+                .padding(.horizontal, count > 9 ? 4 : 0)
+                .background(Color.red, in: Capsule())
+        }
+    }
+
+    @ViewBuilder
+    func compactBadge(count: Int) -> some View {
+        if count > 0 {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 7, height: 7)
+                .offset(x: 1, y: -1)
+        }
+    }
+
+    func emptyLine(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+    }
 }
 
 private extension NotificationLevel {

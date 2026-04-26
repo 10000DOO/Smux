@@ -29,20 +29,13 @@ struct ContentView: View {
             terminalSessionController: appComposition.terminalSessionController,
             terminalOutputStore: appComposition.terminalOutputStore,
             terminalPreferencesStore: appComposition.terminalPreferencesStore,
+            workspaceSessionStore: appComposition.workspaceSessionStore,
             commandRouter: appComposition.commandRouter,
             onOpenWorkspace: {
                 appComposition.workspaceStore.clearOpenError()
                 isWorkspaceImporterPresented = true
             }
         )
-        .toolbar {
-            Button {
-                appComposition.workspaceStore.clearOpenError()
-                isWorkspaceImporterPresented = true
-            } label: {
-                Label("Open Workspace", systemImage: "folder")
-            }
-        }
         .fileImporter(
             isPresented: $isWorkspaceImporterPresented,
             allowedContentTypes: [.folder],
@@ -69,6 +62,7 @@ private final class AppComposition: ObservableObject {
     let terminalSessionController: TerminalSessionController
     let terminalOutputStore: TerminalOutputStore
     let terminalPreferencesStore: TerminalPreferencesStore
+    let workspaceSessionStore: WorkspaceSessionStore
     let agentStateStore: AgentStateStore
     let agentTerminalOutputMonitor: AgentTerminalOutputMonitor
     let recentWorkspaceStore: RecentWorkspaceStore
@@ -90,6 +84,7 @@ private final class AppComposition: ObservableObject {
         let documentTextStore = DocumentTextStore()
         let terminalOutputStore = TerminalOutputStore()
         let terminalPreferencesStore = TerminalPreferencesStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
         let agentStateStore = AgentStateStore()
         let agentTerminalOutputMonitor = AgentTerminalOutputMonitor(
             stateStore: agentStateStore,
@@ -97,6 +92,7 @@ private final class AppComposition: ObservableObject {
         )
         let terminalOutputContext = TerminalOutputContext(
             panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore,
             outputStore: terminalOutputStore,
             monitor: agentTerminalOutputMonitor
         )
@@ -117,7 +113,8 @@ private final class AppComposition: ObservableObject {
             documentFileWatchStore: documentFileWatchStore,
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
-            previewSessionStore: previewSessionStore
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
         )
 
         self.workspaceStore = workspaceStore
@@ -132,6 +129,7 @@ private final class AppComposition: ObservableObject {
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore
         self.terminalPreferencesStore = terminalPreferencesStore
+        self.workspaceSessionStore = workspaceSessionStore
         self.agentStateStore = agentStateStore
         self.agentTerminalOutputMonitor = agentTerminalOutputMonitor
         self.recentWorkspaceStore = recentWorkspaceStore
@@ -329,15 +327,18 @@ private final class TerminalOutputContext {
     weak var terminalSessionController: TerminalSessionController?
 
     private weak var panelStore: PanelStore?
+    private weak var workspaceSessionStore: WorkspaceSessionStore?
     private let outputStore: TerminalOutputStore
     private let monitor: AgentTerminalOutputMonitor
 
     init(
         panelStore: PanelStore,
+        workspaceSessionStore: WorkspaceSessionStore,
         outputStore: TerminalOutputStore,
         monitor: AgentTerminalOutputMonitor
     ) {
         self.panelStore = panelStore
+        self.workspaceSessionStore = workspaceSessionStore
         self.outputStore = outputStore
         self.monitor = monitor
     }
@@ -352,19 +353,27 @@ private final class TerminalOutputContext {
             output: data,
             sessionID: sessionID,
             workspaceID: session.workspaceID,
-            panelID: panelStore?.rootNode.panelID(containingTerminalSession: sessionID)
+            panelID: panelID(containingTerminalSession: sessionID)
         )
+    }
+
+    private func panelID(containingTerminalSession terminalID: TerminalSession.ID) -> PanelNode.ID? {
+        guard let workspaceSessionID = workspaceSessionStore?.sessionID(for: .terminal(terminalID)) else {
+            return nil
+        }
+
+        return panelStore?.rootNode.panelID(containingWorkspaceSession: workspaceSessionID)
     }
 }
 
 private extension PanelNode {
-    func panelID(containingTerminalSession sessionID: TerminalSession.ID) -> PanelNode.ID? {
-        if case let .terminal(storedSessionID) = surface, storedSessionID == sessionID, isLeaf {
+    func panelID(containingWorkspaceSession sessionID: WorkspaceSession.ID) -> PanelNode.ID? {
+        if surface?.sessionID == sessionID, isLeaf {
             return id
         }
 
         return children.lazy.compactMap {
-            $0.panelID(containingTerminalSession: sessionID)
+            $0.panelID(containingWorkspaceSession: sessionID)
         }.first
     }
 }

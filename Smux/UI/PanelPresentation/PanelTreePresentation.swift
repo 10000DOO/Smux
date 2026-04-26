@@ -30,10 +30,12 @@ nonisolated struct LeftRailPanelTabPresentation: Identifiable, Equatable {
 
     init(
         panel: PanelLeafSummary,
+        session: WorkspaceSession? = nil,
         workspace: Workspace?,
         notifications: [WorkspaceNotification]
     ) {
-        let surfacePresentation = PanelSurfacePresentation(surface: panel.surface)
+        let surfacePresentation = session.map(PanelSurfacePresentation.init(session:))
+            ?? PanelSurfacePresentation(surface: panel.surface)
 
         id = panel.id
         title = surfacePresentation.title

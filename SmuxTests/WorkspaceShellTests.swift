@@ -4,26 +4,50 @@ import XCTest
 final class WorkspaceShellTests: XCTestCase {
     func testPanelSurfacePresentationForFeatureSurfaces() {
         let terminal = PanelSurfacePresentation(
-            surface: .terminal(sessionID: UUID())
+            session: WorkspaceSession(
+                id: WorkspaceSession.ID(),
+                workspaceID: Workspace.ID(),
+                kind: .terminal,
+                content: .terminal(TerminalSession.ID()),
+                title: "Terminal",
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
         )
         let editor = PanelSurfacePresentation(
-            surface: .editor(documentID: UUID())
+            session: WorkspaceSession(
+                id: WorkspaceSession.ID(),
+                workspaceID: Workspace.ID(),
+                kind: .editor,
+                content: .editor(DocumentSession.ID()),
+                title: "Editor",
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
         )
         let preview = PanelSurfacePresentation(
-            surface: .preview(previewID: UUID())
+            session: WorkspaceSession(
+                id: WorkspaceSession.ID(),
+                workspaceID: Workspace.ID(),
+                kind: .preview,
+                content: .preview(
+                    previewID: PreviewState.ID(),
+                    sourceDocumentID: DocumentSession.ID()
+                ),
+                title: "Preview",
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
         )
 
         XCTAssertEqual(terminal.title, "Terminal")
         XCTAssertEqual(terminal.systemImage, "terminal")
-        XCTAssertEqual(terminal.accessibilityLabel, "Terminal panel surface")
+        XCTAssertEqual(terminal.accessibilityLabel, "Terminal session")
 
         XCTAssertEqual(editor.title, "Editor")
         XCTAssertEqual(editor.systemImage, "doc.text")
-        XCTAssertEqual(editor.accessibilityLabel, "Editor panel surface")
+        XCTAssertEqual(editor.accessibilityLabel, "Editor session")
 
         XCTAssertEqual(preview.title, "Preview")
         XCTAssertEqual(preview.systemImage, "eye")
-        XCTAssertEqual(preview.accessibilityLabel, "Preview panel surface")
+        XCTAssertEqual(preview.accessibilityLabel, "Preview session")
     }
 
     func testPanelSurfacePresentationForEmptySurface() {
@@ -41,16 +65,16 @@ final class WorkspaceShellTests: XCTestCase {
         let previewID = UUID()
         let tree = PanelNode.split(
             direction: .horizontal,
-            first: .leaf(id: firstPanelID, surface: .terminal(sessionID: terminalID)),
-            second: .leaf(id: secondPanelID, surface: .preview(previewID: previewID))
+            first: .leaf(id: firstPanelID, surface: .session(sessionID: terminalID)),
+            second: .leaf(id: secondPanelID, surface: .session(sessionID: previewID))
         )
 
         let summaries = tree.leafSummaries(focusedPanelID: secondPanelID)
 
         XCTAssertEqual(summaries.map(\.id), [firstPanelID, secondPanelID])
         XCTAssertEqual(summaries.map(\.surface), [
-            .terminal(sessionID: terminalID),
-            .preview(previewID: previewID)
+            .session(sessionID: terminalID),
+            .session(sessionID: previewID)
         ])
         XCTAssertEqual(summaries.map(\.isFocused), [false, true])
         XCTAssertEqual(tree.leafCount, 2)
@@ -137,8 +161,16 @@ final class WorkspaceShellTests: XCTestCase {
         let presentation = LeftRailPanelTabPresentation(
             panel: PanelLeafSummary(
                 id: panelID,
-                surface: .terminal(sessionID: TerminalSession.ID()),
+                surface: .session(sessionID: TerminalSession.ID()),
                 isFocused: true
+            ),
+            session: WorkspaceSession(
+                id: WorkspaceSession.ID(),
+                workspaceID: workspaceID,
+                kind: .terminal,
+                content: .terminal(TerminalSession.ID()),
+                title: "Terminal",
+                createdAt: Date(timeIntervalSince1970: 0)
             ),
             workspace: workspace,
             notifications: notifications
@@ -192,7 +224,7 @@ final class WorkspaceShellTests: XCTestCase {
         let presentation = LeftRailPanelTabPresentation(
             panel: PanelLeafSummary(
                 id: panelID,
-                surface: .terminal(sessionID: TerminalSession.ID()),
+                surface: .session(sessionID: TerminalSession.ID()),
                 isFocused: false
             ),
             workspace: nil,
@@ -303,14 +335,14 @@ final class WorkspaceShellTests: XCTestCase {
 
         store.replacePanel(
             panelID: secondPanelID,
-            with: .terminal(sessionID: terminalID)
+            with: .session(sessionID: terminalID)
         )
 
         XCTAssertEqual(store.focusedPanelID, secondPanelID)
         XCTAssertEqual(store.rootNode.children.first?.surface, .empty)
         XCTAssertEqual(
             store.rootNode.children.last?.surface,
-            .terminal(sessionID: terminalID)
+            .session(sessionID: terminalID)
         )
     }
 

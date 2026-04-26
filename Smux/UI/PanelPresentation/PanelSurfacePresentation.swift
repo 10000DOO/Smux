@@ -7,20 +7,30 @@ nonisolated struct PanelSurfacePresentation: Hashable {
 
     init(surface: PanelSurfaceDescriptor) {
         switch surface {
-        case .terminal:
-            title = "Terminal"
-            systemImage = "terminal"
-        case .editor:
-            title = "Editor"
-            systemImage = "doc.text"
-        case .preview:
-            title = "Preview"
-            systemImage = "eye"
+        case .session:
+            title = "Session"
+            systemImage = "rectangle.inset.filled"
         case .empty:
             title = "Workspace"
             systemImage = "rectangle.split.3x1"
         }
 
         accessibilityLabel = "\(title) panel surface"
+    }
+
+    init(session: WorkspaceSession) {
+        switch session.kind {
+        case .terminal:
+            title = session.title.isEmpty ? "Terminal" : session.title
+            systemImage = "terminal"
+        case .editor:
+            title = session.title.isEmpty ? "Editor" : session.title
+            systemImage = "doc.text"
+        case .preview:
+            title = session.title.isEmpty ? "Preview" : session.title
+            systemImage = "eye"
+        }
+
+        accessibilityLabel = "\(title) session"
     }
 }
