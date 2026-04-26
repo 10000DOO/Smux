@@ -60,7 +60,7 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertFalse(html.contains("mermaid-preview-placeholder"))
     }
 
-    func testShowsPendingAndFailedMermaidStatesWithEscapedDetails() {
+    func testShowsRenderingAndFailedMermaidStatesWithEscapedDetails() {
         let pendingID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
         let failedID = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         let state = makeState(
@@ -87,13 +87,64 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
 
         let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
 
-        XCTAssertTrue(html.contains("Pending"))
+        XCTAssertTrue(html.contains("Rendering"))
         XCTAssertTrue(html.contains("Failed"))
+        XCTAssertTrue(html.contains("mermaid-render-source"))
         XCTAssertTrue(html.contains("A[&lt;start&gt;] --&gt; B"))
         XCTAssertTrue(html.contains("Unsupported &lt;diagram&gt;"))
+        XCTAssertFalse(html.contains("A[<start>]"))
         XCTAssertFalse(html.contains("Unsupported <diagram>"))
     }
 
+    func testLoadsOfficialMermaidBundleFromMainAppResourcesForOfflineRendering() throws {
+        let bundleURL = try XCTUnwrap(Bundle.main.url(forResource: "mermaid.min", withExtension: "js"))
+        let resource = try BundledMermaidJavaScriptResourceProvider(bundle: .main)
+            .loadMermaidJavaScriptResource()
+
+        XCTAssertTrue(bundleURL.isFileURL)
+        XCTAssertEqual(bundleURL.lastPathComponent, "mermaid.min.js")
+        XCTAssertEqual(resource.fileName, "mermaid.min.js")
+        XCTAssertFalse(resource.source.isEmpty)
+        XCTAssertTrue(resource.source.contains("globalThis[\"mermaid\"]"))
+        XCTAssertFalse(resource.source.contains("cdn.jsdelivr"))
+        XCTAssertFalse(resource.source.contains("unpkg.com"))
+    }
+
+    func testInlinesOfflineMermaidBundleForPendingBlocksWithoutExternalScriptSource() {
+        let blockID = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        let placeholder = """
+        <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(blockID.uuidString)" data-source-start-line="2" data-source-end-line="4"></div>
+        """
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1>Diagram</h1>\n\(placeholder)"),
+            mermaidBlocks: [
+                MermaidBlockState(
+                    id: blockID,
+                    sourceRange: SourceRange(startLine: 2, endLine: 4),
+                    source: "flowchart LR\nA --> B",
+                    status: .pending,
+                    artifact: nil,
+                    errorMessage: nil
+                )
+            ]
+        )
+
+        let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
+
+        XCTAssertTrue(html.contains("Content-Security-Policy"))
+        XCTAssertTrue(html.contains("script-src 'unsafe-inline'"))
+        XCTAssertTrue(html.contains("globalThis[\"mermaid\"]"))
+        XCTAssertTrue(html.contains("window.mermaid.initialize"))
+        XCTAssertTrue(html.contains("securityLevel: \"strict\""))
+        XCTAssertTrue(html.contains("window.mermaid.run({ nodes: blocks })"))
+        XCTAssertTrue(html.contains("<pre class=\"mermaid mermaid-render-source\">flowchart LR\nA --&gt; B</pre>"))
+        XCTAssertTrue(html.contains("Rendering"))
+        XCTAssertFalse(html.contains("<script src="))
+        XCTAssertFalse(html.contains("cdn.jsdelivr"))
+        XCTAssertFalse(html.contains("unpkg.com"))
+    }
+
+    @MainActor
     func testNavigationPolicyAllowsInternalAnchorLinksAndBlocksExternalLinks() {
         XCTAssertEqual(
             PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "#section")),

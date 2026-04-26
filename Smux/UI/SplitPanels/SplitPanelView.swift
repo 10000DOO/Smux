@@ -4,6 +4,7 @@ struct SplitPanelView: View {
     var node: PanelNode
     var focusedPanelID: PanelNode.ID?
     @ObservedObject var documentSessionStore: DocumentSessionStore
+    @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
@@ -33,6 +34,7 @@ struct SplitPanelView: View {
                         node: child,
                         focusedPanelID: focusedPanelID,
                         documentSessionStore: documentSessionStore,
+                        documentFileWatchStore: documentFileWatchStore,
                         previewSessionStore: previewSessionStore,
                         documentTextStore: documentTextStore,
                         terminalSessionController: terminalSessionController,
@@ -52,6 +54,7 @@ struct SplitPanelView: View {
                         node: child,
                         focusedPanelID: focusedPanelID,
                         documentSessionStore: documentSessionStore,
+                        documentFileWatchStore: documentFileWatchStore,
                         previewSessionStore: previewSessionStore,
                         documentTextStore: documentTextStore,
                         terminalSessionController: terminalSessionController,
@@ -84,8 +87,10 @@ struct SplitPanelView: View {
                     documentID: documentID,
                     isFocused: focusedPanelID == panelID,
                     documentSessionStore: documentSessionStore,
+                    documentFileWatchStore: documentFileWatchStore,
                     documentTextStore: documentTextStore
                 )
+                .id(documentID)
             case .preview(let previewID):
                 PreviewPanelSurfaceView(
                     previewID: previewID,
@@ -244,19 +249,23 @@ private struct DocumentEditorPanelSurfaceView: View {
     var documentID: DocumentSession.ID
     var isFocused: Bool
     @ObservedObject var documentSessionStore: DocumentSessionStore
+    @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @StateObject private var viewModel: DocumentEditorViewModel
     @State private var errorMessage: String?
+    @State private var watchErrorMessage: String?
 
     init(
         documentID: DocumentSession.ID,
         isFocused: Bool,
         documentSessionStore: DocumentSessionStore,
+        documentFileWatchStore: DocumentFileWatchStore,
         documentTextStore: DocumentTextStore
     ) {
         self.documentID = documentID
         self.isFocused = isFocused
         self.documentSessionStore = documentSessionStore
+        self.documentFileWatchStore = documentFileWatchStore
         self.documentTextStore = documentTextStore
         _viewModel = StateObject(
             wrappedValue: DocumentEditorViewModel(sessionStore: documentSessionStore)
@@ -287,11 +296,17 @@ private struct DocumentEditorPanelSurfaceView: View {
                 )
             }
 
+            if let watchErrorMessage {
+                DocumentEditorWatchIssueBanner(message: watchErrorMessage)
+            }
+
             DocumentEditorSaveIssueBanner(
+                externalChange: viewModel.session?.externalChange,
+                hasLocalEdits: viewModel.session?.isDirty == true,
                 result: viewModel.lastSaveResult,
-                onReload: {
+                onReload: { allowDiscardingLocalEdits in
                     Task { @MainActor in
-                        await loadDocument()
+                        await reloadExternalDocument(allowDiscardingLocalEdits: allowDiscardingLocalEdits)
                     }
                 }
             )
@@ -302,17 +317,33 @@ private struct DocumentEditorPanelSurfaceView: View {
         }
         .onDisappear {
             viewModel.cancelAutosave()
+            documentFileWatchStore.stopWatching(documentID: documentID)
+        }
+        .onChange(of: documentFileWatchStore.eventToken(for: documentID)) {
+            Task { @MainActor in
+                await handleExternalFileWatchEvent()
+            }
+        }
+        .onChange(of: viewModel.autoSaveStatus) {
+            guard
+                viewModel.autoSaveStatus?.documentID == documentID,
+                viewModel.autoSaveStatus?.state == .saved || viewModel.autoSaveStatus?.state == .dirty
+            else {
+                return
+            }
+
+            restartWatchingLoadedDocument()
+        }
+        .onChange(of: viewModel.session?.textVersion) {
+            syncDocumentTextStore()
         }
     }
 
     private func loadDocument() async {
         do {
             try await viewModel.load(sessionID: documentID)
-            documentTextStore.update(
-                documentID: documentID,
-                text: viewModel.text,
-                version: viewModel.session?.textVersion ?? 0
-            )
+            syncDocumentTextStore()
+            startWatchingLoadedDocument()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -321,17 +352,84 @@ private struct DocumentEditorPanelSurfaceView: View {
 
     private func updateText(_ text: String) {
         viewModel.updateText(text)
-        documentTextStore.update(
-            documentID: documentID,
-            text: viewModel.text,
-            version: viewModel.session?.textVersion ?? 0
-        )
+        syncDocumentTextStore()
         viewModel.scheduleAutosave()
     }
 
     private func saveDocument() {
         Task { @MainActor in
-            _ = await viewModel.saveNowResult()
+            let result = await viewModel.saveNowResult()
+            if result.state == .clean || result.state == .dirty {
+                restartWatchingLoadedDocument()
+            }
+        }
+    }
+
+    private func handleExternalFileWatchEvent() async {
+        guard let watchEvent = documentFileWatchStore.latestEvent(for: documentID) else {
+            return
+        }
+
+        let didReload = await viewModel.handleExternalFileEvent(watchEvent.event)
+        if didReload {
+            syncDocumentTextStore()
+        }
+
+        if didReload || shouldRestartWatcher(after: watchEvent.event) {
+            restartWatchingLoadedDocument()
+        }
+    }
+
+    private func reloadExternalDocument(allowDiscardingLocalEdits: Bool) async {
+        let didReload = await viewModel.reloadExternalChangeFromDisk(
+            allowDiscardingLocalEdits: allowDiscardingLocalEdits
+        )
+        if didReload {
+            syncDocumentTextStore()
+            restartWatchingLoadedDocument()
+        }
+    }
+
+    private func startWatchingLoadedDocument() {
+        guard let session = viewModel.session else {
+            return
+        }
+
+        do {
+            try documentFileWatchStore.startWatching(session: session)
+            watchErrorMessage = nil
+        } catch {
+            watchErrorMessage = "External change detection is unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    private func restartWatchingLoadedDocument() {
+        guard let session = viewModel.session else {
+            return
+        }
+
+        do {
+            try documentFileWatchStore.restartWatching(session: session)
+            watchErrorMessage = nil
+        } catch {
+            watchErrorMessage = "External change detection is unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    private func syncDocumentTextStore() {
+        documentTextStore.update(
+            documentID: documentID,
+            text: viewModel.text,
+            version: viewModel.session?.textVersion ?? 0
+        )
+    }
+
+    private func shouldRestartWatcher(after event: FileWatchEvent) -> Bool {
+        switch event.kind {
+        case .deleted, .renamed:
+            return true
+        case .contentsChanged, .metadataChanged, .modified:
+            return false
         }
     }
 }
@@ -404,8 +502,10 @@ private struct DocumentEditorPanelHeader: View {
 }
 
 private struct DocumentEditorSaveIssueBanner: View {
+    var externalChange: DocumentExternalChange?
+    var hasLocalEdits: Bool
     var result: DocumentSaveResult?
-    var onReload: () -> Void
+    var onReload: (Bool) -> Void
 
     var body: some View {
         if let message {
@@ -415,9 +515,9 @@ private struct DocumentEditorSaveIssueBanner: View {
                 Text(message)
                     .lineLimit(2)
                 Spacer()
-                if result?.state == .conflicted {
-                    Button("Reload") {
-                        onReload()
+                if canReload {
+                    Button(reloadButtonTitle) {
+                        onReload(hasLocalEdits)
                     }
                     .buttonStyle(.borderless)
                 }
@@ -430,6 +530,21 @@ private struct DocumentEditorSaveIssueBanner: View {
     }
 
     private var message: String? {
+        if result?.state == .failed {
+            return result?.failure?.message ?? "The document could not be saved."
+        }
+
+        if let externalChange {
+            switch externalChange.kind {
+            case .modified:
+                return "The file changed on disk. Reload before saving again."
+            case .deleted:
+                return "The file was deleted on disk. Restore it before saving again."
+            case .renamed:
+                return "The file was moved or renamed on disk. Reopen it from the file tree."
+            }
+        }
+
         guard let result else {
             return nil
         }
@@ -437,11 +552,39 @@ private struct DocumentEditorSaveIssueBanner: View {
         switch result.state {
         case .conflicted:
             return "The file changed on disk. Reload before saving again."
-        case .failed:
-            return result.failure?.message ?? "The document could not be saved."
-        case .clean, .dirty, .saving:
+        case .clean, .dirty, .saving, .failed:
             return nil
         }
+    }
+
+    private var canReload: Bool {
+        if externalChange?.kind == .modified {
+            return true
+        }
+
+        return result?.state == .conflicted && externalChange == nil
+    }
+
+    private var reloadButtonTitle: String {
+        hasLocalEdits ? "Discard and Reload" : "Reload"
+    }
+}
+
+private struct DocumentEditorWatchIssueBanner: View {
+    var message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+            Text(message)
+                .lineLimit(2)
+            Spacer()
+        }
+        .font(.caption)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 }
 
@@ -451,9 +594,8 @@ private struct PreviewPanelSurfaceView: View {
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @State private var errorMessage: String?
-
-    private let pipeline = MarkdownPreviewPipeline()
-    private let fileIO = FileBackedDocumentFileIO()
+    @State private var pipeline = MarkdownPreviewPipeline()
+    @State private var fileIO = FileBackedDocumentFileIO()
 
     var body: some View {
         VStack(spacing: 0) {

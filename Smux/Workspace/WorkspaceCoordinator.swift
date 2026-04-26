@@ -8,6 +8,8 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var recentWorkspaceStore: RecentWorkspaceStore?
     var gitBranchProvider: any GitBranchProviding
     var documentSessionStore: DocumentSessionStore?
+    var documentFileWatchStore: DocumentFileWatchStore?
+    var documentTextStore: DocumentTextStore?
     var terminalSessionController: TerminalSessionController?
     var previewSessionStore: PreviewSessionStore?
 
@@ -18,6 +20,8 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         recentWorkspaceStore: RecentWorkspaceStore? = nil,
         gitBranchProvider: any GitBranchProviding = ProcessGitBranchProvider(),
         documentSessionStore: DocumentSessionStore? = nil,
+        documentFileWatchStore: DocumentFileWatchStore? = nil,
+        documentTextStore: DocumentTextStore? = nil,
         terminalSessionController: TerminalSessionController? = nil,
         previewSessionStore: PreviewSessionStore? = nil
     ) {
@@ -27,6 +31,8 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         self.recentWorkspaceStore = recentWorkspaceStore
         self.gitBranchProvider = gitBranchProvider
         self.documentSessionStore = documentSessionStore
+        self.documentFileWatchStore = documentFileWatchStore
+        self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.previewSessionStore = previewSessionStore
     }
@@ -108,7 +114,13 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             }
         }
 
+        let wasActiveWorkspace = workspaceStore.activeWorkspace?.id == id
         workspaceStore.closeWorkspace(id: id)
+
+        if wasActiveWorkspace {
+            documentFileWatchStore?.stopAll()
+            documentTextStore?.clearAll()
+        }
     }
 
     func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
@@ -179,6 +191,8 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     private func restoreSnapshotState(_ snapshot: WorkspaceSnapshot?) {
+        documentFileWatchStore?.stopAll()
+        documentTextStore?.clearAll()
         documentSessionStore?.replaceSessions(snapshot?.documents ?? [])
         previewSessionStore?.replaceStates(snapshot?.previews ?? [])
         terminalSessionController?.replaceSnapshotSessions(snapshot?.sessions ?? [])

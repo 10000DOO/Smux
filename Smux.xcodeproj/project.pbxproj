@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A1F0C0012F9B710000000001 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = A1F0C0022F9B710000000001 /* Fixtures */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		6917D3DA2F9B701100F7A6AE /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +31,7 @@
 		6917D3CC2F9B701000F7A6AE /* Smux.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Smux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6917D3D92F9B701100F7A6AE /* SmuxTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmuxTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6917D3E32F9B701100F7A6AE /* SmuxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1F0C0022F9B710000000001 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SmuxTests/Fixtures; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -219,6 +224,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1F0C0012F9B710000000001 /* Fixtures in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

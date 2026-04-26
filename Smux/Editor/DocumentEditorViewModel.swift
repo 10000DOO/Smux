@@ -13,6 +13,7 @@ final class DocumentEditorViewModel: ObservableObject {
     private let fileIO: any DocumentFileIO
     private let autoSaveDebounceInterval: TimeInterval
     private var savingSessionIDs: Set<DocumentSession.ID> = []
+    private var pendingFileWatchEventsAfterSave: [DocumentSession.ID: FileWatchEvent] = [:]
     private lazy var autoSaveCoordinator = AutoSaveCoordinator(
         debounceInterval: autoSaveDebounceInterval,
         saveAction: { [weak self] documentID in
@@ -51,6 +52,7 @@ final class DocumentEditorViewModel: ObservableObject {
         loadedSession.isDirty = false
         loadedSession.saveState = .clean
         loadedSession.conflict = nil
+        loadedSession.externalChange = nil
 
         text = loadedDocument.text
         selectedRange = NSRange(location: 0, length: 0)
@@ -78,12 +80,126 @@ final class DocumentEditorViewModel: ObservableObject {
 
         currentSession.textVersion += 1
         currentSession.isDirty = true
-        currentSession.saveState = .dirty
-        currentSession.conflict = nil
+        if currentSession.externalChange == nil {
+            currentSession.saveState = .dirty
+            currentSession.conflict = nil
+            lastSaveResult = nil
+        } else {
+            currentSession.saveState = .conflicted
+        }
 
-        lastSaveResult = nil
         session = currentSession
         sessionStore.upsertSession(currentSession)
+    }
+
+    @discardableResult
+    func handleExternalFileEvent(_ event: FileWatchEvent) async -> Bool {
+        guard let currentSession = session, event.scope == .openFile(currentSession.url) else {
+            return false
+        }
+
+        guard !savingSessionIDs.contains(currentSession.id) else {
+            pendingFileWatchEventsAfterSave[currentSession.id] = event
+            return false
+        }
+
+        return await processExternalFileEvent(event)
+    }
+
+    @discardableResult
+    private func processExternalFileEvent(_ event: FileWatchEvent) async -> Bool {
+        switch event.kind {
+        case .deleted:
+            return await handleExternalDiskChange(event, missingFileKind: .deleted)
+        case .renamed:
+            return await handleExternalDiskChange(event, missingFileKind: .renamed)
+        case .contentsChanged, .modified, .metadataChanged:
+            return await handleExternalDiskChange(event, missingFileKind: .deleted)
+        }
+    }
+
+    @discardableResult
+    func reloadExternalChangeFromDisk(allowDiscardingLocalEdits: Bool = false) async -> Bool {
+        guard let currentSession = session else {
+            return false
+        }
+
+        guard !currentSession.isDirty || allowDiscardingLocalEdits else {
+            let result = DocumentSaveResult.failed(
+                documentID: currentSession.id,
+                failure: DocumentSaveFailure(
+                    kind: .conflicted,
+                    message: "Reload would discard local edits."
+                )
+            )
+            lastSaveResult = result
+            autoSaveStatus = .completed(documentID: currentSession.id, result: result)
+            return false
+        }
+
+        do {
+            let loadedDocument = try await fileIO.loadText(from: currentSession.url)
+
+            guard var latestSession = session, latestSession.id == currentSession.id else {
+                return false
+            }
+
+            latestSession.language = DocumentLanguage.detect(for: latestSession.url)
+            latestSession.textVersion += 1
+            latestSession.fileFingerprint = loadedDocument.fingerprint
+            latestSession.isDirty = false
+            latestSession.saveState = .clean
+            latestSession.conflict = nil
+            latestSession.externalChange = nil
+
+            text = loadedDocument.text
+            selectedRange = NSRange(location: 0, length: 0)
+            lastSaveResult = nil
+            autoSaveStatus = .idle(documentID: latestSession.id)
+            session = latestSession
+            sessionStore.upsertSession(latestSession)
+
+            return true
+        } catch {
+            markReloadFailure(error, documentID: currentSession.id)
+            return false
+        }
+    }
+
+    private func handleExternalDiskChange(
+        _ event: FileWatchEvent,
+        missingFileKind: DocumentExternalChangeKind
+    ) async -> Bool {
+        guard let currentSession = session else {
+            return false
+        }
+
+        do {
+            let diskFingerprint = try await fileIO.fingerprint(for: currentSession.url)
+
+            guard let latestSession = session, latestSession.id == currentSession.id else {
+                return false
+            }
+
+            guard diskFingerprint != latestSession.fileFingerprint else {
+                return false
+            }
+
+            guard !latestSession.isDirty else {
+                markExternalChange(kind: .modified, event: event, currentFingerprint: diskFingerprint)
+                return false
+            }
+
+            return await reloadExternalChangeFromDisk()
+        } catch {
+            if !fileIO.fileExists(at: currentSession.url) {
+                markExternalChange(kind: missingFileKind, event: event, currentFingerprint: nil)
+            } else {
+                markReloadFailure(error, documentID: currentSession.id)
+            }
+
+            return false
+        }
     }
 
     func updateSelectedRange(_ selectedRange: NSRange?) {
@@ -156,6 +272,62 @@ final class DocumentEditorViewModel: ObservableObject {
         return outcome.result
     }
 
+    private func markExternalChange(
+        kind: DocumentExternalChangeKind,
+        event: FileWatchEvent,
+        currentFingerprint: FileFingerprint?
+    ) {
+        guard var currentSession = session else {
+            return
+        }
+
+        let detectedAt = Date()
+        let conflict = DocumentConflict(
+            detectedAt: detectedAt,
+            loadedFingerprint: currentSession.fileFingerprint,
+            currentFingerprint: currentFingerprint
+        )
+        let externalChange = DocumentExternalChange(
+            kind: kind,
+            detectedAt: detectedAt,
+            url: event.url,
+            fileFingerprint: currentFingerprint
+        )
+
+        discardPendingAutosave()
+        currentSession.isDirty = true
+        currentSession.saveState = .conflicted
+        currentSession.conflict = conflict
+        currentSession.externalChange = externalChange
+
+        let result = DocumentSaveResult.conflicted(documentID: currentSession.id, conflict: conflict)
+        lastSaveResult = result
+        autoSaveStatus = .completed(documentID: currentSession.id, result: result)
+        session = currentSession
+        sessionStore.upsertSession(currentSession)
+    }
+
+    private func markReloadFailure(_ error: any Error, documentID: DocumentSession.ID) {
+        guard var failedSession = sessionStore.session(for: documentID) else {
+            return
+        }
+
+        failedSession.isDirty = true
+        failedSession.saveState = .failed
+
+        if session?.id == documentID {
+            session = failedSession
+        }
+        sessionStore.upsertSession(failedSession)
+
+        let result = DocumentSaveResult.failed(
+            documentID: documentID,
+            failure: DocumentSaveFailure(error: error)
+        )
+        lastSaveResult = result
+        autoSaveStatus = .completed(documentID: documentID, result: result)
+    }
+
     private func saveCurrentSession(
         documentID expectedDocumentID: DocumentSession.ID? = nil
     ) async -> (result: DocumentSaveResult, error: (any Error)?) {
@@ -189,9 +361,6 @@ final class DocumentEditorViewModel: ObservableObject {
             )
         }
         savingSessionIDs.insert(currentSession.id)
-        defer {
-            savingSessionIDs.remove(currentSession.id)
-        }
 
         let saveText = text
         let savedTextVersion = currentSession.textVersion
@@ -202,38 +371,17 @@ final class DocumentEditorViewModel: ObservableObject {
         sessionStore.upsertSession(currentSession)
 
         do {
-            let diskFingerprint = try await fileIO.fingerprint(for: currentSession.url)
-            guard loadedFingerprint == diskFingerprint else {
-                let conflict = DocumentConflict(
-                    detectedAt: Date(),
-                    loadedFingerprint: loadedFingerprint,
-                    currentFingerprint: diskFingerprint
-                )
-                var conflictedSession = session?.id == currentSession.id
-                    ? session ?? currentSession
-                    : sessionStore.session(for: currentSession.id) ?? currentSession
-                conflictedSession.isDirty = true
-                conflictedSession.saveState = .conflicted
-                conflictedSession.conflict = conflict
-
-                if session?.id == currentSession.id {
-                    session = conflictedSession
-                }
-                sessionStore.upsertSession(conflictedSession)
-                let error = DocumentEditorError.conflicted(conflict)
-
-                return (
-                    DocumentSaveResult.conflicted(documentID: currentSession.id, conflict: conflict),
-                    error
-                )
-            }
-
-            let fingerprint = try await fileIO.saveText(saveText, to: currentSession.url)
+            let fingerprint = try await fileIO.saveText(
+                saveText,
+                to: currentSession.url,
+                replacing: loadedFingerprint
+            )
             var latestSession = session?.id == currentSession.id
                 ? session ?? currentSession
                 : sessionStore.session(for: currentSession.id) ?? currentSession
             latestSession.fileFingerprint = fingerprint
             latestSession.conflict = nil
+            latestSession.externalChange = nil
 
             if latestSession.textVersion == savedTextVersion {
                 latestSession.isDirty = false
@@ -248,11 +396,33 @@ final class DocumentEditorViewModel: ObservableObject {
             }
             sessionStore.upsertSession(latestSession)
 
+            savingSessionIDs.remove(currentSession.id)
+            if let pendingOutcome = await processPendingFileWatchEventAfterSave(
+                for: currentSession.id
+            ) {
+                return pendingOutcome
+            }
+
             if latestSession.saveState == .clean {
                 return (DocumentSaveResult.saved(documentID: currentSession.id), nil)
             }
 
             return (DocumentSaveResult.dirty(documentID: currentSession.id), nil)
+        } catch let conflictError as DocumentFileWriteConflict {
+            let conflict = markSaveConflict(
+                currentSession: currentSession,
+                loadedFingerprint: conflictError.loadedFingerprint,
+                currentFingerprint: conflictError.currentFingerprint
+            )
+            savingSessionIDs.remove(currentSession.id)
+            if let pendingOutcome = await processPendingFileWatchEventAfterSave(for: currentSession.id) {
+                return pendingOutcome
+            }
+
+            return (
+                DocumentSaveResult.conflicted(documentID: currentSession.id, conflict: conflict),
+                DocumentEditorError.conflicted(conflict)
+            )
         } catch {
             var failedSession = session?.id == currentSession.id
                 ? session ?? currentSession
@@ -264,14 +434,86 @@ final class DocumentEditorViewModel: ObservableObject {
                 session = failedSession
             }
             sessionStore.upsertSession(failedSession)
-
-            return (
+            savingSessionIDs.remove(currentSession.id)
+            let failedOutcome = (
                 DocumentSaveResult.failed(
                     documentID: currentSession.id,
                     failure: DocumentSaveFailure(error: error)
                 ),
-                error
+                error as (any Error)?
             )
+
+            return await processPendingFileWatchEventAfterSave(for: currentSession.id) ?? failedOutcome
+        }
+    }
+
+    private func markSaveConflict(
+        currentSession: DocumentSession,
+        loadedFingerprint: FileFingerprint?,
+        currentFingerprint: FileFingerprint?
+    ) -> DocumentConflict {
+        let detectedAt = Date()
+        let conflict = DocumentConflict(
+            detectedAt: detectedAt,
+            loadedFingerprint: loadedFingerprint,
+            currentFingerprint: currentFingerprint
+        )
+        let externalChange = DocumentExternalChange(
+            kind: .modified,
+            detectedAt: detectedAt,
+            url: currentSession.url,
+            fileFingerprint: currentFingerprint
+        )
+        let documentID = currentSession.id
+        var conflictedSession = session?.id == documentID
+            ? session ?? currentSession
+            : sessionStore.session(for: documentID) ?? currentSession
+        conflictedSession.isDirty = true
+        conflictedSession.saveState = .conflicted
+        conflictedSession.conflict = conflict
+        conflictedSession.externalChange = externalChange
+
+        if session?.id == documentID {
+            session = conflictedSession
+        }
+        sessionStore.upsertSession(conflictedSession)
+        lastSaveResult = .conflicted(documentID: documentID, conflict: conflict)
+
+        return conflict
+    }
+
+    private func processPendingFileWatchEventAfterSave(
+        for documentID: DocumentSession.ID
+    ) async -> (result: DocumentSaveResult, error: (any Error)?)? {
+        guard let event = pendingFileWatchEventsAfterSave.removeValue(forKey: documentID) else {
+            return nil
+        }
+
+        _ = await processExternalFileEvent(event)
+
+        let latestSession = session?.id == documentID
+            ? session
+            : sessionStore.session(for: documentID)
+        guard let latestSession else {
+            return nil
+        }
+
+        switch latestSession.saveState {
+        case .conflicted:
+            guard let conflict = latestSession.conflict else {
+                return nil
+            }
+            return (
+                DocumentSaveResult.conflicted(documentID: documentID, conflict: conflict),
+                DocumentEditorError.conflicted(conflict)
+            )
+        case .failed:
+            if let lastSaveResult, lastSaveResult.documentID == documentID {
+                return (lastSaveResult, nil)
+            }
+            return nil
+        case .clean, .dirty, .saving:
+            return nil
         }
     }
 }

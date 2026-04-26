@@ -22,6 +22,7 @@ struct ContentView: View {
             recentWorkspaceStore: appComposition.recentWorkspaceStore,
             fileTreeStore: appComposition.fileTreeStore,
             documentSessionStore: appComposition.documentSessionStore,
+            documentFileWatchStore: appComposition.documentFileWatchStore,
             previewSessionStore: appComposition.previewSessionStore,
             documentTextStore: appComposition.documentTextStore,
             terminalSessionController: appComposition.terminalSessionController,
@@ -55,6 +56,7 @@ private final class AppComposition: ObservableObject {
     let notificationStore: NotificationStore
     let fileTreeStore: FileTreeStore
     let documentSessionStore: DocumentSessionStore
+    let documentFileWatchStore: DocumentFileWatchStore
     let previewSessionStore: PreviewSessionStore
     let documentTextStore: DocumentTextStore
     let terminalSessionController: TerminalSessionController
@@ -74,6 +76,7 @@ private final class AppComposition: ObservableObject {
         let systemNotificationDeliverer = UserNotificationCenterNotifier()
         let notificationStore = NotificationStore(systemNotifier: systemNotificationDeliverer)
         let documentSessionStore = DocumentSessionStore()
+        let documentFileWatchStore = DocumentFileWatchStore()
         let previewSessionStore = PreviewSessionStore()
         let documentTextStore = DocumentTextStore()
         let terminalOutputStore = TerminalOutputStore()
@@ -101,6 +104,8 @@ private final class AppComposition: ObservableObject {
             workspaceRepository: workspaceRepository,
             recentWorkspaceStore: recentWorkspaceStore,
             documentSessionStore: documentSessionStore,
+            documentFileWatchStore: documentFileWatchStore,
+            documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             previewSessionStore: previewSessionStore
         )
@@ -110,6 +115,7 @@ private final class AppComposition: ObservableObject {
         self.notificationStore = notificationStore
         self.fileTreeStore = fileTreeStore
         self.documentSessionStore = documentSessionStore
+        self.documentFileWatchStore = documentFileWatchStore
         self.previewSessionStore = previewSessionStore
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController

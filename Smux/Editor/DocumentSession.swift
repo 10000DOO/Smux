@@ -27,6 +27,19 @@ nonisolated enum DocumentSaveState: String, Codable, Hashable, Sendable {
     case conflicted
 }
 
+nonisolated enum DocumentExternalChangeKind: String, Codable, Hashable, Sendable {
+    case modified
+    case deleted
+    case renamed
+}
+
+nonisolated struct DocumentExternalChange: Codable, Hashable, Sendable {
+    var kind: DocumentExternalChangeKind
+    var detectedAt: Date
+    var url: URL
+    var fileFingerprint: FileFingerprint?
+}
+
 nonisolated struct FileFingerprint: Codable, Hashable, Sendable {
     var modificationDate: Date?
     var size: Int64?
@@ -113,6 +126,7 @@ nonisolated struct DocumentSession: Identifiable, Codable, Hashable, Sendable {
     var isDirty: Bool
     var saveState: DocumentSaveState
     var conflict: DocumentConflict?
+    var externalChange: DocumentExternalChange?
 }
 
 extension DocumentSession {
@@ -125,7 +139,8 @@ extension DocumentSession {
         fileFingerprint: FileFingerprint? = nil,
         isDirty: Bool = false,
         saveState: DocumentSaveState = .clean,
-        conflict: DocumentConflict? = nil
+        conflict: DocumentConflict? = nil,
+        externalChange: DocumentExternalChange? = nil
     ) -> DocumentSession {
         DocumentSession(
             id: id,
@@ -136,7 +151,8 @@ extension DocumentSession {
             fileFingerprint: fileFingerprint,
             isDirty: isDirty,
             saveState: saveState,
-            conflict: conflict
+            conflict: conflict,
+            externalChange: externalChange
         )
     }
 }

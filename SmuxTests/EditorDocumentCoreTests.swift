@@ -109,6 +109,36 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
     }
 
+    func testFileBackedSaveRejectsChangedDiskFingerprint() async throws {
+        let directoryURL = try makeTemporaryDirectory()
+        let fileURL = directoryURL.appendingPathComponent("Conflict.md", isDirectory: false)
+        defer {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+
+        try Data("Initial".utf8).write(to: fileURL)
+        let fileIO = FileBackedDocumentFileIO()
+        let loadedDocument = try await fileIO.loadText(from: fileURL)
+        try Data("External".utf8).write(to: fileURL)
+
+        do {
+            _ = try await fileIO.saveText(
+                "Local",
+                to: fileURL,
+                replacing: loadedDocument.fingerprint
+            )
+            XCTFail("Expected changed disk fingerprint to be rejected.")
+        } catch let conflict as DocumentFileWriteConflict {
+            XCTAssertEqual(conflict.loadedFingerprint, loadedDocument.fingerprint)
+            XCTAssertNotNil(conflict.currentFingerprint)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        let diskText = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertEqual(diskText, "External")
+    }
+
     @MainActor
     func testSaveNowDetectsExternalDiskChangesBeforeWriting() async throws {
         let loadedFingerprint = makeFingerprint(size: 6, contentHash: "loaded")
@@ -149,6 +179,332 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(viewModel.lastSaveResult?.state, .conflicted)
         XCTAssertEqual(viewModel.lastSaveResult?.conflict?.loadedFingerprint, loadedFingerprint)
         XCTAssertNil(viewModel.lastSaveResult?.failure)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testExternalFileModificationReloadsCleanDocument() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 15, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/ExternalReload.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        fileIO.loadedDocument = LoadedDocument(text: "External", fingerprint: diskFingerprint)
+        fileIO.fingerprintResult = diskFingerprint
+
+        let didReload = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .modified)
+        )
+
+        XCTAssertTrue(didReload)
+        XCTAssertEqual(viewModel.text, "External")
+        XCTAssertEqual(viewModel.session?.textVersion, 1)
+        XCTAssertEqual(viewModel.session?.fileFingerprint, diskFingerprint)
+        XCTAssertEqual(viewModel.session?.isDirty, false)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertNil(viewModel.session?.externalChange)
+        XCTAssertNil(viewModel.lastSaveResult)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testExternalAtomicRenameReloadsCleanDocumentWhenPathStillExists() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 15, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/AtomicRename.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        fileIO.loadedDocument = LoadedDocument(text: "External", fingerprint: diskFingerprint)
+        fileIO.fingerprintResult = diskFingerprint
+
+        let didReload = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .renamed)
+        )
+
+        XCTAssertTrue(didReload)
+        XCTAssertEqual(viewModel.text, "External")
+        XCTAssertEqual(viewModel.session?.fileFingerprint, diskFingerprint)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertNil(viewModel.session?.externalChange)
+    }
+
+    @MainActor
+    func testExternalFileModificationMarksDirtyDocumentConflicted() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 15, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/DirtyExternal.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("Local")
+        fileIO.fingerprintResult = diskFingerprint
+
+        let didReload = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .metadataChanged)
+        )
+
+        XCTAssertFalse(didReload)
+        XCTAssertEqual(viewModel.text, "Local")
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.session?.isDirty, true)
+        XCTAssertEqual(viewModel.session?.conflict?.loadedFingerprint, loadedFingerprint)
+        XCTAssertEqual(viewModel.session?.conflict?.currentFingerprint, diskFingerprint)
+        XCTAssertEqual(viewModel.session?.externalChange?.kind, .modified)
+        XCTAssertEqual(viewModel.session?.externalChange?.fileFingerprint, diskFingerprint)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .conflicted)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testExternalFileEventWithMatchingFingerprintIsIgnored() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/SelfSave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        let didReload = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .modified)
+        )
+
+        XCTAssertFalse(didReload)
+        XCTAssertEqual(viewModel.text, "Before")
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertNil(viewModel.session?.externalChange)
+        XCTAssertNil(viewModel.lastSaveResult)
+    }
+
+    @MainActor
+    func testExternalDeleteAndRenameMarkDocumentConflicted() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/Missing.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        fileIO.fingerprintError = EditorDocumentCoreTestError.loadFailed
+        fileIO.fileExistsResult = false
+        let didReloadAfterDelete = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .deleted)
+        )
+
+        XCTAssertFalse(didReloadAfterDelete)
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.session?.externalChange?.kind, .deleted)
+
+        let didReloadAfterRename = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .renamed)
+        )
+
+        XCTAssertFalse(didReloadAfterRename)
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.session?.externalChange?.kind, .renamed)
+    }
+
+    @MainActor
+    func testExternalFileEventDuringSaveIsReprocessedAfterSave() async throws {
+        let loadedFingerprint = makeFingerprint(size: 6, contentHash: "loaded")
+        let savedFingerprint = makeFingerprint(size: 5, contentHash: "saved")
+        let externalFingerprint = makeFingerprint(size: 8, contentHash: "external")
+        let saveGate = SaveGate()
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/PendingExternalDuringSave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            savedFingerprint: savedFingerprint,
+            fingerprintResult: loadedFingerprint,
+            saveGate: saveGate
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("Local")
+
+        let saveTask = Task { @MainActor in
+            await viewModel.saveNowResult()
+        }
+        await saveGate.waitUntilWaiting()
+
+        fileIO.loadedDocument = LoadedDocument(text: "External", fingerprint: externalFingerprint)
+        fileIO.fingerprintResult = externalFingerprint
+        let didReloadDuringSave = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .modified)
+        )
+
+        XCTAssertFalse(didReloadDuringSave)
+
+        await saveGate.resume()
+        let result = await saveTask.value
+
+        XCTAssertEqual(result.state, .clean)
+        XCTAssertEqual(fileIO.savedText, "Local")
+        XCTAssertEqual(viewModel.text, "External")
+        XCTAssertEqual(viewModel.session?.textVersion, 2)
+        XCTAssertEqual(viewModel.session?.fileFingerprint, externalFingerprint)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertEqual(viewModel.session?.isDirty, false)
+        XCTAssertNil(viewModel.session?.externalChange)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testExternalFileEventDuringFailedSaveIsReprocessedAfterSave() async throws {
+        let loadedFingerprint = makeFingerprint(size: 6, contentHash: "loaded")
+        let saveGate = SaveGate()
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/PendingDeleteDuringFailedSave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint,
+            saveGate: saveGate,
+            saveError: EditorDocumentCoreTestError.saveFailed
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("Local")
+
+        let saveTask = Task { @MainActor in
+            await viewModel.saveNowResult()
+        }
+        await saveGate.waitUntilWaiting()
+
+        fileIO.fingerprintError = EditorDocumentCoreTestError.loadFailed
+        fileIO.fileExistsResult = false
+        let didReloadDuringSave = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .deleted)
+        )
+
+        XCTAssertFalse(didReloadDuringSave)
+
+        await saveGate.resume()
+        let result = await saveTask.value
+
+        XCTAssertEqual(result.state, .conflicted)
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.session?.externalChange?.kind, .deleted)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .conflicted)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testReloadExternalChangeRequiresExplicitDiscardForDirtyDocument() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 15, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/DiscardRequired.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("Local")
+        fileIO.loadedDocument = LoadedDocument(text: "External", fingerprint: diskFingerprint)
+        fileIO.fingerprintResult = diskFingerprint
+        _ = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .modified)
+        )
+
+        let blockedReload = await viewModel.reloadExternalChangeFromDisk()
+
+        XCTAssertFalse(blockedReload)
+        XCTAssertEqual(viewModel.text, "Local")
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .failed)
+        XCTAssertEqual(viewModel.lastSaveResult?.failure?.kind, .conflicted)
+
+        let didReload = await viewModel.reloadExternalChangeFromDisk(allowDiscardingLocalEdits: true)
+
+        XCTAssertTrue(didReload)
+        XCTAssertEqual(viewModel.text, "External")
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertEqual(viewModel.session?.isDirty, false)
+        XCTAssertNil(viewModel.session?.externalChange)
+    }
+
+    @MainActor
+    func testReloadExternalChangeFailurePreservesFailureState() async throws {
+        let loadedFingerprint = makeFingerprint(size: 7, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 15, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/ReloadFailure.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: loadedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("Local")
+        fileIO.fingerprintResult = diskFingerprint
+        _ = await viewModel.handleExternalFileEvent(
+            FileWatchEvent(scope: .openFile(session.url), kind: .modified)
+        )
+        fileIO.loadError = EditorDocumentCoreTestError.loadFailed
+
+        let didReload = await viewModel.reloadExternalChangeFromDisk(allowDiscardingLocalEdits: true)
+
+        XCTAssertFalse(didReload)
+        XCTAssertEqual(viewModel.text, "Local")
+        XCTAssertEqual(viewModel.session?.saveState, .failed)
+        XCTAssertEqual(viewModel.session?.isDirty, true)
+        XCTAssertEqual(viewModel.session?.externalChange?.kind, .modified)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .failed)
+        XCTAssertEqual(viewModel.lastSaveResult?.failure?.kind, .fileIO)
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
     }
 
@@ -605,7 +961,11 @@ private final class StubDocumentFileIO: DocumentFileIO, @unchecked Sendable {
     var loadedDocument: LoadedDocument
     var savedFingerprint: FileFingerprint
     var fingerprintResult: FileFingerprint?
+    var writeFingerprintResult: FileFingerprint?
     var saveError: (any Error)?
+    var loadError: (any Error)?
+    var fingerprintError: (any Error)?
+    var fileExistsResult = true
     var saveGate: SaveGate?
     private(set) var savedText: String?
     private(set) var savedURL: URL?
@@ -630,18 +990,34 @@ private final class StubDocumentFileIO: DocumentFileIO, @unchecked Sendable {
     }
 
     func loadText(from url: URL) async throws -> LoadedDocument {
-        loadedDocument
+        if let loadError {
+            throw loadError
+        }
+
+        return loadedDocument
     }
 
-    func saveText(_ text: String, to url: URL) async throws -> FileFingerprint {
+    func saveText(
+        _ text: String,
+        to url: URL,
+        replacing expectedFingerprint: FileFingerprint?
+    ) async throws -> FileFingerprint {
         saveAttemptCount += 1
 
-        if let saveError {
-            throw saveError
+        let currentFingerprint = writeFingerprintResult ?? fingerprintResult ?? loadedDocument.fingerprint
+        if let expectedFingerprint, currentFingerprint != expectedFingerprint {
+            throw DocumentFileWriteConflict(
+                loadedFingerprint: expectedFingerprint,
+                currentFingerprint: currentFingerprint
+            )
         }
 
         if let saveGate {
             await saveGate.wait()
+        }
+
+        if let saveError {
+            throw saveError
         }
 
         savedText = text
@@ -650,7 +1026,15 @@ private final class StubDocumentFileIO: DocumentFileIO, @unchecked Sendable {
     }
 
     func fingerprint(for url: URL) async throws -> FileFingerprint {
-        fingerprintResult ?? loadedDocument.fingerprint
+        if let fingerprintError {
+            throw fingerprintError
+        }
+
+        return fingerprintResult ?? loadedDocument.fingerprint
+    }
+
+    func fileExists(at url: URL) -> Bool {
+        fileExistsResult
     }
 }
 
@@ -704,5 +1088,6 @@ private actor AutoSaveRecorder {
 }
 
 private enum EditorDocumentCoreTestError: Error, Equatable {
+    case loadFailed
     case saveFailed
 }

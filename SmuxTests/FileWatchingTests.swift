@@ -75,14 +75,14 @@ final class FileWatchingTests: XCTestCase {
         )
     }
 
-    func testManualFileWatcherEmitsOnlyActiveScopes() throws {
+    func testManualFileWatcherEmitsOnlyActiveScopes() {
         let activeURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Active.md")
         let inactiveURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Inactive.md")
         let watcher = ManualFileWatcher()
         let recorder = EventBatchRecorder()
         watcher.eventHandler = recorder.record
 
-        try watcher.startWatching(.openFile(activeURL))
+        watcher.startWatching(.openFile(activeURL))
         watcher.emit([
             FileWatchEvent(scope: .openFile(activeURL), kind: .modified),
             FileWatchEvent(scope: .openFile(inactiveURL), kind: .modified),
@@ -101,17 +101,133 @@ final class FileWatchingTests: XCTestCase {
         )
     }
 
-    func testManualFileWatcherStopAllStopsDelivery() throws {
+    func testManualFileWatcherStopAllStopsDelivery() {
         let rootURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace", isDirectory: true)
         let watcher = ManualFileWatcher()
         let recorder = EventBatchRecorder()
         watcher.eventHandler = recorder.record
 
-        try watcher.startWatching(.workspaceRoot(rootURL))
+        watcher.startWatching(.workspaceRoot(rootURL))
         watcher.stopAll()
         watcher.emit(FileWatchEvent(scope: .workspaceRoot(rootURL), kind: .contentsChanged))
 
         XCTAssertTrue(recorder.batches.isEmpty)
+    }
+
+    func testManualFileWatcherRestartRestoresDeliveryForSameScope() {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Restart.md")
+        let scope = FileWatchScope.openFile(fileURL)
+        let watcher = ManualFileWatcher()
+        let recorder = EventBatchRecorder()
+        watcher.eventHandler = recorder.record
+
+        watcher.startWatching(scope)
+        watcher.stopWatching(scope)
+        watcher.emit(FileWatchEvent(scope: scope, kind: .modified))
+        watcher.startWatching(scope)
+        watcher.emit(FileWatchEvent(scope: scope, kind: .metadataChanged))
+
+        XCTAssertEqual(
+            recorder.batches,
+            [
+                [
+                    FileWatchEvent(scope: scope, kind: .metadataChanged),
+                ],
+            ]
+        )
+    }
+
+    @MainActor
+    func testDocumentFileWatchStoreRoutesEventsByDocumentID() async throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Note.md")
+        let documentID = DocumentSession.ID()
+        let watcher = ManualFileWatcher()
+        let store = DocumentFileWatchStore(fileWatcher: watcher)
+
+        try store.startWatching(documentID: documentID, url: fileURL)
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .modified))
+        await Task.yield()
+
+        let routedEvent = store.latestEvent(for: documentID)
+        XCTAssertEqual(routedEvent?.documentID, documentID)
+        XCTAssertEqual(routedEvent?.event, FileWatchEvent(scope: .openFile(fileURL), kind: .modified))
+        XCTAssertEqual(store.eventToken(for: documentID), routedEvent?.id)
+    }
+
+    @MainActor
+    func testDocumentFileWatchStoreStopsDeliveryForRemovedDocument() async throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Removed.md")
+        let documentID = DocumentSession.ID()
+        let watcher = ManualFileWatcher()
+        let store = DocumentFileWatchStore(fileWatcher: watcher)
+
+        try store.startWatching(documentID: documentID, url: fileURL)
+        store.stopWatching(documentID: documentID)
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .deleted))
+        await Task.yield()
+
+        XCTAssertNil(store.latestEvent(for: documentID))
+        XCTAssertNil(store.eventToken(for: documentID))
+    }
+
+    @MainActor
+    func testDocumentFileWatchStoreKeepsSharedScopeUntilLastDocumentStops() async throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Shared.md")
+        let firstDocumentID = DocumentSession.ID()
+        let secondDocumentID = DocumentSession.ID()
+        let watcher = ManualFileWatcher()
+        let store = DocumentFileWatchStore(fileWatcher: watcher)
+
+        try store.startWatching(documentID: firstDocumentID, url: fileURL)
+        try store.startWatching(documentID: secondDocumentID, url: fileURL)
+        store.stopWatching(documentID: firstDocumentID)
+
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .renamed))
+        await Task.yield()
+
+        XCTAssertNil(store.latestEvent(for: firstDocumentID))
+        XCTAssertEqual(store.latestEvent(for: secondDocumentID)?.event.kind, .renamed)
+    }
+
+    @MainActor
+    func testDocumentFileWatchStoreRestartReattachesExistingScope() async throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/Reattached.md")
+        let documentID = DocumentSession.ID()
+        let watcher = ManualFileWatcher()
+        let store = DocumentFileWatchStore(fileWatcher: watcher)
+
+        try store.startWatching(documentID: documentID, url: fileURL)
+        watcher.stopWatching(.openFile(fileURL))
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .modified))
+        await Task.yield()
+
+        XCTAssertNil(store.latestEvent(for: documentID))
+
+        try store.restartWatching(documentID: documentID, url: fileURL)
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .metadataChanged))
+        await Task.yield()
+
+        XCTAssertEqual(store.latestEvent(for: documentID)?.event.kind, .metadataChanged)
+    }
+
+    @MainActor
+    func testDocumentFileWatchStoreRestartFailureClearsStaleMapping() async throws {
+        let fileURL = URL(fileURLWithPath: "/tmp/SmuxWorkspace/RestartFailure.md")
+        let documentID = DocumentSession.ID()
+        let watcher = RestartFailureFileWatcher()
+        let store = DocumentFileWatchStore(fileWatcher: watcher)
+
+        try store.startWatching(documentID: documentID, url: fileURL)
+        watcher.shouldFailStart = true
+
+        XCTAssertThrowsError(try store.restartWatching(documentID: documentID, url: fileURL))
+
+        watcher.shouldFailStart = false
+        try store.startWatching(documentID: documentID, url: fileURL)
+        watcher.emit(FileWatchEvent(scope: .openFile(fileURL), kind: .modified))
+        await Task.yield()
+
+        XCTAssertEqual(store.latestEvent(for: documentID)?.event.kind, .modified)
     }
 }
 
@@ -130,4 +246,38 @@ private final class EventBatchRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         lockedBatches.append(events)
     }
+}
+
+private final class RestartFailureFileWatcher: FileWatching, @unchecked Sendable {
+    var shouldFailStart = false
+    var eventHandler: (@Sendable ([FileWatchEvent]) -> Void)?
+    private var activeScopes: Set<FileWatchScope> = []
+
+    func startWatching(_ scope: FileWatchScope) throws {
+        if shouldFailStart {
+            throw RestartFailureFileWatcherError.startFailed
+        }
+
+        activeScopes.insert(scope)
+    }
+
+    func stopWatching(_ scope: FileWatchScope) {
+        activeScopes.remove(scope)
+    }
+
+    func stopAll() {
+        activeScopes.removeAll()
+    }
+
+    func emit(_ event: FileWatchEvent) {
+        guard activeScopes.contains(event.scope) else {
+            return
+        }
+
+        eventHandler?([event])
+    }
+}
+
+private enum RestartFailureFileWatcherError: Error {
+    case startFailed
 }

@@ -167,6 +167,100 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertFalse(html.contains("A --&gt; B"))
     }
 
+    func testRepresentativeMermaidFixtureExtractsCommonDiagramTypesAndBuildsRenderInputs() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let markdown = try loadFixture(named: "representative_mermaid.md")
+        let expectedSources = [
+            """
+            flowchart LR
+                Start([Start]) --> Decision{Ready?}
+                Decision -- Yes --> Render[Render preview]
+                Decision -- No --> Fix[Edit source]
+            """,
+            """
+            sequenceDiagram
+                participant Editor
+                participant Preview
+                Editor->>Preview: Markdown changed
+                Preview-->>Editor: Sanitized HTML
+            """,
+            """
+            stateDiagram-v2
+                [*] --> Pending
+                Pending --> Rendering
+                Rendering --> Rendered
+                Rendering --> Failed
+            """,
+            """
+            gantt
+                title Preview P0-4
+                dateFormat  YYYY-MM-DD
+                section Offline
+                Bundle linked       :done, 2026-04-26, 1d
+                Fixture coverage    :active, 2026-04-26, 1d
+            """,
+            """
+            classDiagram
+                class MarkdownPreviewPipeline
+                class MermaidRenderCoordinator
+                MarkdownPreviewPipeline --> MermaidRenderCoordinator : blocks
+            """,
+            """
+            erDiagram
+                DOCUMENT ||--o{ MERMAID_BLOCK : contains
+                MERMAID_BLOCK {
+                    string id
+                    string source
+                    string status
+                }
+            """
+        ]
+        let expectedDiagramTypes = [
+            "flowchart",
+            "sequenceDiagram",
+            "stateDiagram-v2",
+            "gantt",
+            "classDiagram",
+            "erDiagram"
+        ]
+
+        let state = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertEqual(state.mermaidBlocks.map(\.source), expectedSources)
+        XCTAssertTrue(html.contains("<h1 id=\"mermaid-preview-fixture\">Mermaid Preview Fixture</h1>"))
+        XCTAssertFalse(html.contains("<script"))
+        XCTAssertFalse(html.contains("<pre><code class=\"language-mermaid\">"))
+        XCTAssertFalse(html.contains("Decision -- Yes --&gt; Render"))
+        XCTAssertFalse(html.contains("Editor-&gt;&gt;Preview"))
+        XCTAssertFalse(html.contains("DOCUMENT ||--o{ MERMAID_BLOCK"))
+
+        for block in state.mermaidBlocks {
+            XCTAssertEqual(block.status, .pending)
+            XCTAssertNil(block.artifact)
+            XCTAssertNil(block.errorMessage)
+            XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(block.id.uuidString)\""))
+            XCTAssertTrue(html.contains("data-source-start-line=\"\(block.sourceRange.startLine)\""))
+            XCTAssertTrue(html.contains("data-source-end-line=\"\(block.sourceRange.endLine)\""))
+        }
+
+        let resource = MermaidJavaScriptResource(fileName: "mermaid.min.js", source: "official bundle")
+        let renderer = MarkdownPreviewRecordingMermaidRenderer(artifact: .sanitizedSVG("<svg></svg>"))
+        let coordinator = MermaidRenderCoordinator(
+            resourceProvider: MarkdownPreviewStaticMermaidResourceProvider(resource: resource),
+            renderer: renderer
+        )
+
+        for block in state.mermaidBlocks {
+            _ = try await coordinator.render(block: block)
+        }
+
+        XCTAssertEqual(renderer.requests.map(\.source), expectedSources)
+        XCTAssertEqual(renderer.requests.map(\.diagramType), expectedDiagramTypes)
+        XCTAssertTrue(renderer.requests.allSatisfy { $0.javaScriptResource == resource })
+    }
+
     func testUnclosedMermaidFenceProducesDeterministicBlockAndError() async throws {
         let pipeline = MarkdownPreviewPipeline()
         let markdown = """
@@ -225,5 +319,40 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         let reset = try await pipeline.render(documentID: documentID, text: "# Reset", version: 1)
         XCTAssertNotNil(reset.sanitizedMarkdown)
         XCTAssertTrue(reset.errors.isEmpty)
+    }
+
+    private func loadFixture(named fileName: String) throws -> String {
+        let bundle = Bundle(for: Self.self)
+        let fixtureURL = try XCTUnwrap(
+            bundle.url(
+                forResource: fileName,
+                withExtension: nil,
+                subdirectory: "Fixtures"
+            )
+        )
+
+        return try String(contentsOf: fixtureURL, encoding: .utf8)
+    }
+}
+
+private struct MarkdownPreviewStaticMermaidResourceProvider: MermaidJavaScriptResourceProviding {
+    var resource: MermaidJavaScriptResource
+
+    func loadMermaidJavaScriptResource() throws -> MermaidJavaScriptResource {
+        resource
+    }
+}
+
+private final class MarkdownPreviewRecordingMermaidRenderer: MermaidDiagramRendering {
+    private let artifact: MermaidRenderArtifact
+    private(set) var requests: [MermaidRenderRequest] = []
+
+    init(artifact: MermaidRenderArtifact) {
+        self.artifact = artifact
+    }
+
+    func render(_ request: MermaidRenderRequest) async throws -> MermaidRenderArtifact {
+        requests.append(request)
+        return artifact
     }
 }

@@ -7,6 +7,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var recentWorkspaceStore: RecentWorkspaceStore
     @ObservedObject var fileTreeStore: FileTreeStore
     @ObservedObject var documentSessionStore: DocumentSessionStore
+    @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
@@ -39,6 +40,7 @@ struct WorkspaceShellView: View {
                 node: panelStore.rootNode,
                 focusedPanelID: panelStore.focusedPanelID,
                 documentSessionStore: documentSessionStore,
+                documentFileWatchStore: documentFileWatchStore,
                 previewSessionStore: previewSessionStore,
                 documentTextStore: documentTextStore,
                 terminalSessionController: terminalSessionController,

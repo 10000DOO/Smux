@@ -646,6 +646,35 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorOpenStopsDocumentWatchersAndClearsTextSnapshots() async throws {
+        let activeWorkspace = Workspace.make(rootURL: URL(fileURLWithPath: "/tmp/ActiveWorkspace"))
+        let nextRootURL = URL(fileURLWithPath: "/tmp/NextWorkspace")
+        let documentURL = activeWorkspace.rootURL.appendingPathComponent("Draft.md")
+        let documentID = DocumentSession.ID()
+        let watcher = ManualFileWatcher()
+        let documentFileWatchStore = DocumentFileWatchStore(fileWatcher: watcher)
+        let documentTextStore = DocumentTextStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: activeWorkspace),
+            panelStore: PanelStore(),
+            workspaceRepository: NoopWorkspaceRepository(),
+            gitBranchProvider: NoopGitBranchProvider(),
+            documentFileWatchStore: documentFileWatchStore,
+            documentTextStore: documentTextStore
+        )
+
+        try documentFileWatchStore.startWatching(documentID: documentID, url: documentURL)
+        documentTextStore.update(documentID: documentID, text: "Draft", version: 1)
+
+        try await coordinator.openWorkspace(rootURL: nextRootURL)
+        watcher.emit(FileWatchEvent(scope: .openFile(documentURL), kind: .modified))
+        await Task.yield()
+
+        XCTAssertNil(documentFileWatchStore.latestEvent(for: documentID))
+        XCTAssertNil(documentTextStore.snapshot(for: documentID))
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorRejectsReentrantOpenAndDoesNotCommitSecondWorkspace() async throws {
         let firstRootURL = URL(fileURLWithPath: "/tmp/ReentrantFirst")
         let secondRootURL = URL(fileURLWithPath: "/tmp/ReentrantSecond")
@@ -811,7 +840,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceCoordinatorCloseSavesSnapshotAndRemovesWorkspace() async {
+    func testWorkspaceCoordinatorCloseSavesSnapshotAndRemovesWorkspace() async throws {
         let activeWorkspace = Workspace.make(
             id: UUID(),
             rootURL: URL(fileURLWithPath: "/tmp/CloseActive"),
@@ -833,6 +862,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let panelStore = PanelStore(rootNode: panelTree)
         let documentSessionStore = DocumentSessionStore()
+        let watcher = ManualFileWatcher()
+        let documentFileWatchStore = DocumentFileWatchStore(fileWatcher: watcher)
+        let documentTextStore = DocumentTextStore()
         let previewSessionStore = PreviewSessionStore()
         let terminalSessionController = TerminalSessionController(
             ptyFactory: WorkspacePanelMockPTYClientFactory(client: WorkspacePanelMockPTYClient(processID: 1111))
@@ -858,20 +890,28 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceRepository: repository,
             recentWorkspaceStore: recentStore,
             documentSessionStore: documentSessionStore,
+            documentFileWatchStore: documentFileWatchStore,
+            documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             previewSessionStore: previewSessionStore
         )
         documentSessionStore.upsertSession(documentSession)
+        try documentFileWatchStore.startWatching(documentID: documentSession.id, url: documentSession.url)
+        documentTextStore.update(documentID: documentSession.id, text: "Draft", version: 1)
         previewSessionStore.upsertState(previewState, for: previewState.id)
         recentStore.noteOpened(activeWorkspace)
 
         await coordinator.closeWorkspace(id: activeWorkspace.id)
+        watcher.emit(FileWatchEvent(scope: .openFile(documentSession.url), kind: .modified))
+        await Task.yield()
 
         let savedSnapshot = await repository.savedSnapshot(for: activeWorkspace.rootURL)
         XCTAssertEqual(savedSnapshot?.workspaceID, activeWorkspace.id)
         XCTAssertEqual(savedSnapshot?.panelTree, panelTree)
         XCTAssertEqual(savedSnapshot?.documents, [documentSession])
         XCTAssertEqual(savedSnapshot?.previews, [previewState])
+        XCTAssertNil(documentFileWatchStore.latestEvent(for: documentSession.id))
+        XCTAssertNil(documentTextStore.snapshot(for: documentSession.id))
         XCTAssertEqual(workspaceStore.workspaces.map(\.id), [remainingWorkspace.id])
         XCTAssertEqual(workspaceStore.activeWorkspace?.id, remainingWorkspace.id)
         XCTAssertEqual(recentStore.recentWorkspaces.map(\.id), [activeWorkspace.id])
