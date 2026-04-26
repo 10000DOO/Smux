@@ -274,6 +274,105 @@ final class NotificationStoreTests: XCTestCase {
         XCTAssertFalse(store.notifications.first?.routing.shouldBadgePanel ?? true)
     }
 
+    @MainActor
+    func testNotificationStoreFindsMostRecentVisibleNotificationForWorkspace() {
+        let workspaceID = Workspace.ID()
+        let otherWorkspaceID = Workspace.ID()
+        let store = NotificationStore()
+        let oldest = agentNotification(
+            workspaceID: workspaceID,
+            message: "Oldest",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let otherWorkspaceNewest = agentNotification(
+            workspaceID: otherWorkspaceID,
+            message: "Other",
+            createdAt: Date(timeIntervalSince1970: 5)
+        )
+        let newestInWorkspace = agentNotification(
+            workspaceID: workspaceID,
+            message: "Newest",
+            createdAt: Date(timeIntervalSince1970: 3)
+        )
+
+        store.ingest(oldest)
+        store.ingest(otherWorkspaceNewest)
+        store.ingest(newestInWorkspace)
+
+        XCTAssertEqual(
+            store.mostRecentVisibleNotificationID(workspaceID: workspaceID),
+            newestInWorkspace.id
+        )
+        XCTAssertEqual(
+            store.mostRecentVisibleNotificationID(workspaceID: nil),
+            otherWorkspaceNewest.id
+        )
+    }
+
+    @MainActor
+    func testNotificationStoreMostRecentVisibleNotificationIgnoresHiddenEntries() {
+        let workspaceID = Workspace.ID()
+        let store = NotificationStore(
+            policy: NotificationRoutingPolicy(showsAcknowledged: false, minimumLevel: .warning)
+        )
+        let visible = agentNotification(
+            workspaceID: workspaceID,
+            level: .warning,
+            message: "Visible",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let hiddenLowPriority = agentNotification(
+            workspaceID: workspaceID,
+            level: .info,
+            message: "Low priority",
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let hiddenAcknowledged = agentNotification(
+            workspaceID: workspaceID,
+            level: .warning,
+            message: "Acknowledged",
+            createdAt: Date(timeIntervalSince1970: 3),
+            acknowledgedAt: Date(timeIntervalSince1970: 4)
+        )
+
+        store.ingest(visible)
+        store.ingest(hiddenLowPriority)
+        store.ingest(hiddenAcknowledged)
+
+        XCTAssertEqual(
+            store.mostRecentVisibleNotificationID(workspaceID: workspaceID),
+            visible.id
+        )
+    }
+
+    @MainActor
+    func testNotificationStoreMostRecentVisibleNotificationIgnoresAcknowledgedEvenWhenVisible() {
+        let workspaceID = Workspace.ID()
+        let store = NotificationStore(
+            policy: NotificationRoutingPolicy(showsAcknowledged: true, minimumLevel: .info)
+        )
+        let visible = agentNotification(
+            workspaceID: workspaceID,
+            message: "Visible",
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let acknowledged = agentNotification(
+            workspaceID: workspaceID,
+            message: "Acknowledged",
+            createdAt: Date(timeIntervalSince1970: 2),
+            acknowledgedAt: Date(timeIntervalSince1970: 3)
+        )
+
+        store.ingest(visible)
+        store.ingest(acknowledged)
+
+        XCTAssertTrue(store.notifications.first?.routing.shouldShowInLeftRail ?? false)
+        XCTAssertEqual(
+            store.mostRecentVisibleNotificationID(workspaceID: workspaceID),
+            visible.id
+        )
+    }
+
     private func agentNotification(
         id: AgentNotification.ID = AgentNotification.ID(),
         workspaceID: Workspace.ID = Workspace.ID(),
@@ -282,6 +381,7 @@ final class NotificationStoreTests: XCTestCase {
         level: NotificationLevel = .info,
         kind: AgentNotificationKind = .waitingForInput,
         message: String = "Notification",
+        createdAt: Date = Date(timeIntervalSince1970: 1),
         acknowledgedAt: Date? = nil
     ) -> AgentNotification {
         AgentNotification(
@@ -292,7 +392,7 @@ final class NotificationStoreTests: XCTestCase {
             level: level,
             kind: kind,
             message: message,
-            createdAt: Date(timeIntervalSince1970: 1),
+            createdAt: createdAt,
             acknowledgedAt: acknowledgedAt
         )
     }

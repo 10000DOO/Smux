@@ -80,10 +80,33 @@ final class NotificationStore: ObservableObject {
         notifications[index] = notification
     }
 
+    func mostRecentVisibleNotificationID(workspaceID: Workspace.ID?) -> WorkspaceNotification.ID? {
+        var selectedNotification: WorkspaceNotification?
+
+        for notification in notifications where isVisible(notification, workspaceID: workspaceID) {
+            guard let currentSelection = selectedNotification else {
+                selectedNotification = notification
+                continue
+            }
+
+            if notification.createdAt > currentSelection.createdAt {
+                selectedNotification = notification
+            }
+        }
+
+        return selectedNotification?.id
+    }
+
     private func shouldDeliverSystemNotification(for notification: AgentNotification) -> Bool {
         policy.allowsSystemDelivery(for: notification)
             && !deliveredSystemNotificationIDs.contains(notification.id)
             && !pendingSystemNotificationIDs.contains(notification.id)
+    }
+
+    private func isVisible(_ notification: WorkspaceNotification, workspaceID: Workspace.ID?) -> Bool {
+        notification.acknowledgedAt == nil
+            && notification.routing.shouldShowInLeftRail
+            && (workspaceID == nil || notification.workspaceID == workspaceID)
     }
 
     private func finishSystemNotificationDelivery(

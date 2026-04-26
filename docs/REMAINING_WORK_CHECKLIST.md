@@ -31,6 +31,7 @@ Last updated: 2026-04-26
   external-link blocking are implemented.
 - Terminal theme controls, terminal font size controls, persisted terminal preferences, and
   font-size-aware terminal resize estimation are implemented.
+- A keyboard action for activating the most recent visible workspace notification is implemented.
 - 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
   WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
@@ -65,6 +66,7 @@ Last updated: 2026-04-26
 | P1-6 | Mermaid zoom/pan controls | Implemented and verified |
 | P2-1 | external link opening policy UI | Implemented and verified |
 | P2-2 | terminal theme/font settings | Implemented and verified |
+| P2-3 | most recent notification keyboard action | Implemented and verified |
 | Future | notarization/release automation/open-source prep | Deferred by PRD |
 
 ## P0 Checklist
@@ -158,7 +160,7 @@ Suggested write set:
 
 - [x] User-controllable external link open policy.
 - [x] Terminal font/theme settings.
-- [ ] Most recent notification keyboard action.
+- [x] Most recent notification keyboard action.
 - [ ] Release/notarization automation after feature completion.
 
 ## Parallelization Plan
@@ -167,8 +169,7 @@ The next work should run in slices. Parallel work is allowed only when write set
 
 ### Current Best Sequence
 
-1. P2 most recent notification keyboard action.
-2. Release/notarization automation after feature completion.
+1. Release/notarization automation after feature completion.
 
 ### Safe Parallel Groups
 
@@ -219,3 +220,4 @@ editor/preview UI changes.
 - [x] Mermaid zoom/pan controls and persisted preview zoom state.
 - [x] Preview external link policy UI and persisted preference.
 - [x] Terminal theme/font controls and persisted terminal preferences.
+- [x] Most recent notification keyboard action.

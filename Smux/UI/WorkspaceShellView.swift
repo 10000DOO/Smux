@@ -71,6 +71,10 @@ struct WorkspaceShellView: View {
                 activeWorkspaceID: workspaceStore.activeWorkspace?.id,
                 focusedPanelID: panelStore.focusedPanelID,
                 selectedDocumentURL: fileTreeStore.selectedDocumentCandidateURL,
+                latestNotificationID: (workspaceStore.activeWorkspace?.id).flatMap { workspaceID in
+                    notificationStore.mostRecentVisibleNotificationID(workspaceID: workspaceID)
+                },
+                onActivateNotification: activateNotification,
                 onCommandError: { message in
                     workspaceStore.openErrorMessage = message
                 }
@@ -104,6 +108,8 @@ private struct WorkspaceCommandShortcutLayer: View {
     var activeWorkspaceID: Workspace.ID?
     var focusedPanelID: PanelNode.ID?
     var selectedDocumentURL: URL?
+    var latestNotificationID: WorkspaceNotification.ID?
+    var onActivateNotification: (WorkspaceNotification.ID) -> Void
     var onCommandError: (String) -> Void
 
     var body: some View {
@@ -142,6 +148,11 @@ private struct WorkspaceCommandShortcutLayer: View {
                 openSelectedDocumentInNewPanel(preferredSurface: .preview)
             }
             .keyboardShortcut("p", modifiers: [.command, .option])
+
+            shortcutButton("Activate Most Recent Notification") {
+                activateMostRecentNotification()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
         }
         .buttonStyle(.plain)
         .frame(width: 0, height: 0)
@@ -189,6 +200,20 @@ private struct WorkspaceCommandShortcutLayer: View {
                 onCommandError("Failed to open document: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func activateMostRecentNotification() {
+        guard activeWorkspaceID != nil else {
+            onCommandError("No workspace is currently active.")
+            return
+        }
+
+        guard let latestNotificationID else {
+            onCommandError("No visible notifications in the active workspace.")
+            return
+        }
+
+        onActivateNotification(latestNotificationID)
     }
 }
 
