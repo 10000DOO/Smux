@@ -94,6 +94,136 @@ final class WorkspaceShellTests: XCTestCase {
         )
     }
 
+    func testLeftRailPanelTabPresentationUsesPanelWorkspaceAndNotifications() {
+        let panelID = PanelNode.ID()
+        let workspaceID = Workspace.ID()
+        let workspace = Workspace.make(
+            id: workspaceID,
+            rootURL: URL(fileURLWithPath: "/tmp/SmuxWorkspace"),
+            gitBranch: "feature/rail"
+        )
+        let notifications = [
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Older",
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Needs attention",
+                createdAt: Date(timeIntervalSince1970: 3)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: PanelNode.ID(),
+                shouldBadgePanel: true,
+                message: "Other panel",
+                createdAt: Date(timeIntervalSince1970: 4)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Acknowledged",
+                createdAt: Date(timeIntervalSince1970: 5),
+                acknowledgedAt: Date(timeIntervalSince1970: 6)
+            )
+        ]
+
+        let presentation = LeftRailPanelTabPresentation(
+            panel: PanelLeafSummary(
+                id: panelID,
+                surface: .terminal(sessionID: TerminalSession.ID()),
+                isFocused: true
+            ),
+            workspace: workspace,
+            notifications: notifications
+        )
+
+        XCTAssertEqual(presentation.id, panelID)
+        XCTAssertEqual(presentation.title, "Terminal")
+        XCTAssertEqual(presentation.systemImage, "terminal")
+        XCTAssertEqual(presentation.metadataText, "feature/rail - SmuxWorkspace")
+        XCTAssertEqual(presentation.latestNotificationMessage, "Needs attention")
+        XCTAssertEqual(presentation.badgeCount, 2)
+        XCTAssertTrue(presentation.isFocused)
+    }
+
+    func testWorkspaceShellNotificationFilterScopesRailTabsAndPanelBadgesToActiveWorkspace() {
+        let panelID = PanelNode.ID()
+        let activeWorkspaceID = Workspace.ID()
+        let otherWorkspaceID = Workspace.ID()
+        let notifications = [
+            workspaceNotification(
+                workspaceID: activeWorkspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Active rail",
+                createdAt: Date(timeIntervalSince1970: 2)
+            ),
+            workspaceNotification(
+                workspaceID: activeWorkspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Active badge only",
+                createdAt: Date(timeIntervalSince1970: 3),
+                shouldShowInLeftRail: false
+            ),
+            workspaceNotification(
+                workspaceID: otherWorkspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                message: "Other workspace newer",
+                createdAt: Date(timeIntervalSince1970: 4)
+            )
+        ]
+
+        let scopedNotifications = WorkspaceShellNotificationFilter.activeWorkspaceNotifications(
+            notifications,
+            activeWorkspaceID: activeWorkspaceID
+        )
+        let railNotifications = WorkspaceShellNotificationFilter.leftRailNotifications(
+            from: scopedNotifications
+        )
+        let presentation = LeftRailPanelTabPresentation(
+            panel: PanelLeafSummary(
+                id: panelID,
+                surface: .terminal(sessionID: TerminalSession.ID()),
+                isFocused: false
+            ),
+            workspace: nil,
+            notifications: scopedNotifications
+        )
+
+        XCTAssertEqual(scopedNotifications.map { $0.workspaceID }, [activeWorkspaceID, activeWorkspaceID])
+        XCTAssertEqual(railNotifications.map { $0.message }, ["Active rail"])
+        XCTAssertEqual(presentation.latestNotificationMessage, "Active rail")
+        XCTAssertEqual(presentation.badgeCount, 2)
+        XCTAssertEqual(
+            PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
+                for: panelID,
+                notifications: scopedNotifications
+            ),
+            2
+        )
+    }
+
+    func testTerminalAutoRefreshTrackerOnlyRefreshesTerminatedSessionOnce() {
+        let sessionID = TerminalSession.ID()
+        var tracker = TerminalAutoRefreshTracker()
+
+        XCTAssertFalse(tracker.shouldRefresh(sessionID: sessionID, status: .running))
+        XCTAssertFalse(tracker.shouldRefresh(sessionID: sessionID, status: .failed))
+        XCTAssertTrue(tracker.shouldRefresh(sessionID: sessionID, status: .terminated))
+        XCTAssertFalse(tracker.shouldRefresh(sessionID: sessionID, status: .terminated))
+        XCTAssertFalse(tracker.shouldRefresh(sessionID: sessionID, status: nil))
+        XCTAssertEqual(tracker.refreshedSessionID, sessionID)
+    }
+
     func testLeftRailNotificationSummaryGroupsAgentStatuses() {
         let workspaceID = Workspace.ID()
         let notifications = [
@@ -200,6 +330,9 @@ final class WorkspaceShellTests: XCTestCase {
         panelID: PanelNode.ID?,
         shouldBadgePanel: Bool,
         agentKind: AgentNotificationKind? = nil,
+        message: String = "Notification",
+        createdAt: Date = Date(timeIntervalSince1970: 1),
+        shouldShowInLeftRail: Bool = true,
         acknowledgedAt: Date? = nil
     ) -> WorkspaceNotification {
         WorkspaceNotification(
@@ -208,11 +341,11 @@ final class WorkspaceShellTests: XCTestCase {
             source: agentKind == nil ? .system : .agent(UUID()),
             level: .warning,
             agentKind: agentKind,
-            message: "Notification",
-            createdAt: Date(timeIntervalSince1970: 1),
+            message: message,
+            createdAt: createdAt,
             routing: WorkspaceNotificationRouting(
                 panelID: panelID,
-                shouldShowInLeftRail: true,
+                shouldShowInLeftRail: shouldShowInLeftRail,
                 shouldBadgePanel: shouldBadgePanel
             ),
             acknowledgedAt: acknowledgedAt

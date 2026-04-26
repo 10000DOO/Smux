@@ -31,44 +31,81 @@ struct PanelSurfacePlaceholderView: View {
     }
 
     private var actionButtons: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             HStack(spacing: 8) {
-                Button {
+                placeholderActionButton(
+                    title: "Terminal",
+                    systemImage: "terminal",
+                    isEnabled: true
+                ) {
                     onCreateTerminal()
-                } label: {
-                    Label("Terminal", systemImage: "terminal")
                 }
 
-                Button {
+                placeholderActionButton(
+                    title: "Editor",
+                    systemImage: "doc.text",
+                    isEnabled: selectedDocumentURL != nil
+                ) {
                     onOpenSelectedDocument(.editor)
-                } label: {
-                    Label("Editor", systemImage: "doc.text")
                 }
-                .disabled(selectedDocumentURL == nil)
 
-                Button {
+                placeholderActionButton(
+                    title: "Preview",
+                    systemImage: "eye",
+                    isEnabled: selectedDocumentURL != nil
+                ) {
                     onOpenSelectedDocument(.preview)
-                } label: {
-                    Label("Preview", systemImage: "eye")
                 }
-                .disabled(selectedDocumentURL == nil)
             }
 
             HStack(spacing: 8) {
-                Button {
+                placeholderActionButton(
+                    title: "Split Right",
+                    systemImage: "rectangle.split.2x1",
+                    isEnabled: true
+                ) {
                     onSplit(.horizontal)
-                } label: {
-                    Label("Split H", systemImage: "rectangle.split.2x1")
                 }
 
-                Button {
+                placeholderActionButton(
+                    title: "Split Down",
+                    systemImage: "rectangle.split.1x2",
+                    isEnabled: true
+                ) {
                     onSplit(.vertical)
-                } label: {
-                    Label("Split V", systemImage: "rectangle.split.1x2")
                 }
             }
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .frame(maxWidth: 360)
+    }
+
+    private func placeholderActionButton(
+        title: String,
+        systemImage: String,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .frame(width: 15)
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(.semibold))
+            .frame(minWidth: 92)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 9)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.55), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .foregroundStyle(Color.primary)
+        .opacity(isEnabled ? 1 : 0.45)
+        .help(title)
     }
 }

@@ -6,6 +6,13 @@ nonisolated struct LeftRailNotificationSummary: Equatable {
     var failedCount: Int
     var totalCount: Int
 
+    static let empty = LeftRailNotificationSummary(
+        waitingCount: 0,
+        completedCount: 0,
+        failedCount: 0,
+        totalCount: 0
+    )
+
     static func make(from notifications: [WorkspaceNotification]) -> LeftRailNotificationSummary {
         LeftRailNotificationSummary(
             waitingCount: notifications.filter { $0.isWaitingAgentNotification }.count,

@@ -4,13 +4,15 @@ struct LeftRailView: View {
     var workspace: Workspace?
     var workspaces: [Workspace] = []
     var recentWorkspaces: [RecentWorkspace] = []
-    var rootNode: PanelNode
-    var focusedPanelID: PanelNode.ID?
-    var notifications: [WorkspaceNotification]
+    var panelTabs: [LeftRailPanelTabPresentation] = []
+    var notificationSummary: LeftRailNotificationSummary = .empty
+    var visibleNotifications: [WorkspaceNotification] = []
     var fileTreeRoot: FileTreeNode? = nil
     var selectedFileTreeNodeID: FileTreeNode.ID? = nil
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
+    var onSelectPanel: (PanelNode.ID) -> Void = { _ in }
+    var onCreatePanel: () -> Void = {}
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
     var onCloseWorkspace: (Workspace.ID) -> Void = { _ in }
     var onOpenRecentWorkspace: (RecentWorkspace) -> Void = { _ in }
@@ -18,16 +20,18 @@ struct LeftRailView: View {
     var onAcknowledgeNotification: (WorkspaceNotification.ID) -> Void = { _ in }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
+            railToolbar
+
             workspaceSummary
 
             Divider()
 
-            workspaceList
+            panelsSummary
 
             Divider()
 
-            panelsSummary
+            workspaceList
 
             Divider()
 
@@ -37,14 +41,64 @@ struct LeftRailView: View {
 
             latestNotifications
         }
-        .padding(14)
-        .frame(width: 240)
+        .padding(12)
+        .frame(width: 260)
         .frame(maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
 private extension LeftRailView {
+    var railToolbar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.secondary)
+                .help("Left rail")
+
+            Button {
+                if let notificationID = visibleNotifications.first?.id {
+                    onSelectNotification(notificationID)
+                }
+            } label: {
+                Image(systemName: "bell")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .overlay(alignment: .topTrailing) {
+                        notificationToolbarBadge
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(visibleNotifications.isEmpty)
+            .foregroundStyle(visibleNotifications.isEmpty ? .tertiary : .secondary)
+            .help("Open latest notification")
+
+            Spacer()
+
+            Button(action: onCreatePanel) {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 26, height: 24)
+            }
+            .buttonStyle(.plain)
+            .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+            .foregroundStyle(Color.accentColor)
+            .help("New panel")
+            .accessibilityLabel("New panel")
+        }
+    }
+
+    @ViewBuilder
+    var notificationToolbarBadge: some View {
+        if notificationSummary.totalCount > 0 {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 7, height: 7)
+                .offset(x: 1, y: -1)
+        }
+    }
+
     var workspaceSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Workspace", systemImage: "macwindow")
@@ -132,28 +186,94 @@ private extension LeftRailView {
 
     var panelsSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Panels", systemImage: "rectangle.split.3x1")
-                .font(.subheadline)
-            Text("\(panelSummaries.count) open")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(panelSummaries.prefix(4)) { panel in
-                let presentation = PanelSurfacePresentation(surface: panel.surface)
+            HStack {
+                Label("Panels", systemImage: "rectangle.split.3x1")
+                    .font(.subheadline)
+                Spacer()
+                Text("\(panelTabs.count)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
-                HStack(spacing: 6) {
-                    Image(systemName: presentation.systemImage)
-                        .frame(width: 14)
-                    Text(presentation.title)
-                        .lineLimit(1)
-                    if panel.isFocused {
-                        Text("Focused")
-                            .foregroundStyle(.primary)
+            if panelTabs.isEmpty {
+                Text("No panels")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(panelTabs) { panelTab in
+                            panelTabButton(panelTab)
+                        }
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(panel.isFocused ? .primary : .secondary)
+                .frame(maxHeight: 230, alignment: .topLeading)
             }
         }
+    }
+
+    func panelTabButton(_ panelTab: LeftRailPanelTabPresentation) -> some View {
+        Button {
+            onSelectPanel(panelTab.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Image(systemName: panelTab.systemImage)
+                        .frame(width: 15)
+
+                    Text(panelTab.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+
+                    Spacer(minLength: 6)
+
+                    panelBadge(count: panelTab.badgeCount, isFocused: panelTab.isFocused)
+                }
+
+                Text(panelTab.metadataText)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .foregroundStyle(panelTab.isFocused ? Color.white.opacity(0.82) : Color.secondary)
+
+                if let latestNotificationMessage = panelTab.latestNotificationMessage {
+                    Text(latestNotificationMessage)
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(1)
+                        .foregroundStyle(panelTab.isFocused ? Color.white : Color.primary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 9)
+            .foregroundStyle(panelTab.isFocused ? Color.white : Color.primary)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(panelTab.isFocused ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(
+                        panelTab.isFocused ? Color.clear : Color(nsColor: .separatorColor).opacity(0.45),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(panelTab.title)
+    }
+
+    @ViewBuilder
+    func panelBadge(count: Int, isFocused: Bool) -> some View {
+        if count > 0 {
+            Text(count > 9 ? "9+" : "\(count)")
+                .font(.caption2.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(isFocused ? Color.accentColor : Color.white)
+                .frame(minWidth: 18, minHeight: 18)
+                .padding(.horizontal, count > 9 ? 4 : 0)
+                .background(isFocused ? Color.white : Color.red, in: Capsule())
+                .accessibilityLabel("\(count) unacknowledged panel notifications")
+            }
     }
 
     var fileTreeSection: some View {
@@ -279,24 +399,6 @@ private extension LeftRailView {
         .foregroundStyle(.secondary)
     }
 
-    var visibleNotifications: [WorkspaceNotification] {
-        Array(leftRailNotifications.prefix(3))
-    }
-
-    var leftRailNotifications: [WorkspaceNotification] {
-        notifications.filter { notification in
-            notification.routing.shouldShowInLeftRail
-                && (workspace == nil || notification.workspaceID == workspace?.id)
-        }
-    }
-
-    var notificationSummary: LeftRailNotificationSummary {
-        LeftRailNotificationSummary.make(from: leftRailNotifications)
-    }
-
-    var panelSummaries: [PanelLeafSummary] {
-        rootNode.leafSummaries(focusedPanelID: focusedPanelID)
-    }
 }
 
 private extension NotificationLevel {

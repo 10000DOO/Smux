@@ -22,13 +22,17 @@ struct WorkspaceShellView: View {
                 workspace: workspaceStore.activeWorkspace,
                 workspaces: workspaceStore.workspaces,
                 recentWorkspaces: recentWorkspaceStore.recentWorkspaces,
-                rootNode: panelStore.rootNode,
-                focusedPanelID: panelStore.focusedPanelID,
-                notifications: notificationStore.notifications,
+                panelTabs: leftRailPanelTabs,
+                notificationSummary: leftRailNotificationSummary,
+                visibleNotifications: visibleLeftRailNotifications,
                 fileTreeRoot: fileTreeStore.root,
                 selectedFileTreeNodeID: fileTreeStore.selectedNodeID,
                 onExpandFileTreeNode: expandFileTreeNode,
                 onSelectFileTreeNode: selectFileTreeNode,
+                onSelectPanel: { commandRouter.focus(panelID: $0) },
+                onCreatePanel: {
+                    commandRouter.createPanel(splitDirection: .horizontal, surface: .empty)
+                },
                 onSelectWorkspace: selectWorkspace,
                 onCloseWorkspace: closeWorkspace,
                 onOpenRecentWorkspace: openRecentWorkspace,
@@ -50,7 +54,7 @@ struct WorkspaceShellView: View {
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,
                 terminalPreferencesStore: terminalPreferencesStore,
-                notifications: notificationStore.notifications,
+                notifications: activeWorkspaceNotifications,
                 onFocus: { commandRouter.focus(panelID: $0) },
                 onSplit: { panelID, direction in
                     commandRouter.splitPanel(panelID: panelID, direction: direction, surface: .empty)
@@ -224,6 +228,37 @@ private struct WorkspaceCommandShortcutLayer: View {
 }
 
 private extension WorkspaceShellView {
+    var activeWorkspaceNotifications: [WorkspaceNotification] {
+        WorkspaceShellNotificationFilter.activeWorkspaceNotifications(
+            notificationStore.notifications,
+            activeWorkspaceID: workspaceStore.activeWorkspace?.id
+        )
+    }
+
+    var leftRailPanelTabs: [LeftRailPanelTabPresentation] {
+        panelStore.rootNode
+            .leafSummaries(focusedPanelID: panelStore.focusedPanelID)
+            .map { panel in
+                LeftRailPanelTabPresentation(
+                    panel: panel,
+                    workspace: workspaceStore.activeWorkspace,
+                    notifications: activeWorkspaceNotifications
+                )
+            }
+    }
+
+    var visibleLeftRailNotifications: [WorkspaceNotification] {
+        Array(leftRailNotifications.prefix(3))
+    }
+
+    var leftRailNotificationSummary: LeftRailNotificationSummary {
+        LeftRailNotificationSummary.make(from: leftRailNotifications)
+    }
+
+    var leftRailNotifications: [WorkspaceNotification] {
+        WorkspaceShellNotificationFilter.leftRailNotifications(from: activeWorkspaceNotifications)
+    }
+
     func loadFileTreeForActiveWorkspace() async {
         guard let workspace = workspaceStore.activeWorkspace else {
             fileTreeStore.clear()
@@ -355,6 +390,25 @@ private extension WorkspaceShellView {
                 workspaceStore.openErrorMessage = "Failed to open document: \(error.localizedDescription)"
             }
         }
+    }
+}
+
+nonisolated enum WorkspaceShellNotificationFilter {
+    static func activeWorkspaceNotifications(
+        _ notifications: [WorkspaceNotification],
+        activeWorkspaceID: Workspace.ID?
+    ) -> [WorkspaceNotification] {
+        guard let activeWorkspaceID else {
+            return notifications
+        }
+
+        return notifications.filter { $0.workspaceID == activeWorkspaceID }
+    }
+
+    static func leftRailNotifications(
+        from notifications: [WorkspaceNotification]
+    ) -> [WorkspaceNotification] {
+        notifications.filter(\.routing.shouldShowInLeftRail)
     }
 }
 

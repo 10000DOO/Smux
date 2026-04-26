@@ -239,19 +239,6 @@ private struct SplitPanelDivider: View {
     }
 }
 
-nonisolated struct PanelNotificationBadgeSummary: Equatable {
-    static func unacknowledgedBadgeCount(
-        for panelID: PanelNode.ID,
-        notifications: [WorkspaceNotification]
-    ) -> Int {
-        notifications.filter {
-            $0.routing.panelID == panelID
-                && $0.routing.shouldBadgePanel
-                && $0.acknowledgedAt == nil
-        }.count
-    }
-}
-
 private struct PanelNotificationBadgeView: View {
     var count: Int
 
@@ -276,6 +263,7 @@ private struct TerminalPanelSurfaceView: View {
     var onCreateTerminal: () -> Void
     @StateObject private var viewModel: TerminalViewModel
     @State private var lastResizedGridSize: TerminalGridSizeEstimator?
+    @State private var autoRefreshTracker = TerminalAutoRefreshTracker()
 
     init(
         sessionID: TerminalSession.ID,
@@ -336,9 +324,11 @@ private struct TerminalPanelSurfaceView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
             syncSession()
+            refreshTerminatedSessionIfNeeded()
         }
         .onChange(of: terminalSessionController.sessions[sessionID]) {
             syncSession()
+            refreshTerminatedSessionIfNeeded()
         }
     }
 
@@ -348,6 +338,15 @@ private struct TerminalPanelSurfaceView: View {
 
     private func syncSession() {
         viewModel.session = session
+    }
+
+    private func refreshTerminatedSessionIfNeeded() {
+        if autoRefreshTracker.shouldRefresh(
+            sessionID: sessionID,
+            status: session?.status
+        ) {
+            onCreateTerminal()
+        }
     }
 
     private func resizeTerminal(to size: CGSize) {
@@ -361,6 +360,26 @@ private struct TerminalPanelSurfaceView: View {
 
         lastResizedGridSize = gridSize
         viewModel.resize(columns: gridSize.columns, rows: gridSize.rows)
+    }
+}
+
+nonisolated struct TerminalAutoRefreshTracker: Equatable {
+    private(set) var refreshedSessionID: TerminalSession.ID?
+
+    mutating func shouldRefresh(
+        sessionID: TerminalSession.ID,
+        status: TerminalSessionStatus?
+    ) -> Bool {
+        guard status == .terminated else {
+            return false
+        }
+
+        guard refreshedSessionID != sessionID else {
+            return false
+        }
+
+        refreshedSessionID = sessionID
+        return true
     }
 }
 
