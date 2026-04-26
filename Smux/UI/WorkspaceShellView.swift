@@ -53,7 +53,10 @@ struct WorkspaceShellView: View {
                 onSplit: { panelID, direction in
                     panelStore.splitPanel(panelID: panelID, direction: direction, surface: .empty)
                 },
-                onCreateTerminal: createTerminal
+                onCreateTerminal: createTerminal,
+                onUpdateSplitRatio: { splitID, ratio in
+                    panelStore.updateSplitRatio(splitID: splitID, ratio: ratio)
+                }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

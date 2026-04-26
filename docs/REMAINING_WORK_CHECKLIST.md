@@ -11,6 +11,7 @@ Last updated: 2026-04-26
 
 - Workspace open/close/switch, recent workspace persistence, Git branch 표시가 구현됨.
 - Split panel tree, panel focus, surface descriptor, panel snapshot 저장/복원이 구현됨.
+- Split panel divider drag, ratio update, nested split ratio 보존과 snapshot ratio 복원이 구현됨.
 - File tree core/UI, Markdown/Mermaid 파일 강조, lazy expand, 문서 open flow가 구현됨.
 - 실제 PTY terminal session 생성, 출력 buffer, 기본 ANSI 처리, copy/paste/key input,
   resize, terminate/failure state가 구현됨.
@@ -38,7 +39,7 @@ Last updated: 2026-04-26
 | Priority | Work | Current status |
 | --- | --- | --- |
 | P0-1 | 외부 파일 변경 감지와 editor/preview 반영 | Implemented and verified |
-| P0-2 | panel splitter size 조절 및 ratio 복원 | Model has ratio, UI resize missing |
+| P0-2 | panel splitter size 조절 및 ratio 복원 | Implemented and verified |
 | P0-3 | terminal 호환성 고도화 | PTY/basic input/output done, xterm parity incomplete |
 | P0-4 | Mermaid sample fixture와 offline render 검증 | Fixture/offline HTML tests verified; WebView pixel verification remains |
 | P0-5 | performance/memory measurement | No automated benchmark yet |
@@ -77,11 +78,11 @@ Suggested write set:
 
 ### P0-2. Panel Splitter Size And Restore
 
-- [ ] Replace fixed `HStack`/`VStack` split rendering with draggable splitter handles.
-- [ ] Update `PanelNode.ratio` on drag.
-- [ ] Persist and restore ratios through workspace snapshots.
-- [ ] Add tests for ratio clamping and snapshot round trip.
-- [ ] Verify nested split behavior.
+- [x] Replace fixed `HStack`/`VStack` split rendering with draggable splitter handles.
+- [x] Update `PanelNode.ratio` on drag.
+- [x] Persist and restore ratios through workspace snapshots.
+- [x] Add tests for ratio clamping and snapshot round trip.
+- [x] Verify nested split behavior.
 
 Suggested write set:
 

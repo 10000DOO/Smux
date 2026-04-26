@@ -14,6 +14,8 @@ struct SplitPanelView: View {
     var onReplaceSurface: (PanelNode.ID, PanelSurfaceDescriptor) -> Void
     var onSplit: (PanelNode.ID, SplitDirection) -> Void
     var onCreateTerminal: (PanelNode.ID) -> Void
+    var onUpdateSplitRatio: (PanelNode.ID, Double) -> Void
+    @State private var dragStartRatio: Double?
 
     var body: some View {
         switch node.kind {
@@ -26,50 +28,125 @@ struct SplitPanelView: View {
 
     @ViewBuilder
     private var splitView: some View {
-        switch node.direction {
-        case .horizontal:
-            HStack(spacing: 1) {
-                ForEach(node.children) { child in
-                    SplitPanelView(
-                        node: child,
-                        focusedPanelID: focusedPanelID,
-                        documentSessionStore: documentSessionStore,
-                        documentFileWatchStore: documentFileWatchStore,
-                        previewSessionStore: previewSessionStore,
-                        documentTextStore: documentTextStore,
-                        terminalSessionController: terminalSessionController,
-                        terminalOutputStore: terminalOutputStore,
-                        notifications: notifications,
-                        onFocus: onFocus,
-                        onReplaceSurface: onReplaceSurface,
-                        onSplit: onSplit,
-                        onCreateTerminal: onCreateTerminal
+        if let direction = node.direction,
+           let firstChild = node.children.first,
+           node.children.count == 2,
+           let secondChild = node.children.last {
+            GeometryReader { proxy in
+                switch direction {
+                case .horizontal:
+                    horizontalSplitView(
+                        firstChild: firstChild,
+                        secondChild: secondChild,
+                        size: proxy.size
+                    )
+                case .vertical:
+                    verticalSplitView(
+                        firstChild: firstChild,
+                        secondChild: secondChild,
+                        size: proxy.size
                     )
                 }
             }
-        case .vertical:
-            VStack(spacing: 1) {
-                ForEach(node.children) { child in
-                    SplitPanelView(
-                        node: child,
-                        focusedPanelID: focusedPanelID,
-                        documentSessionStore: documentSessionStore,
-                        documentFileWatchStore: documentFileWatchStore,
-                        previewSessionStore: previewSessionStore,
-                        documentTextStore: documentTextStore,
-                        terminalSessionController: terminalSessionController,
-                        terminalOutputStore: terminalOutputStore,
-                        notifications: notifications,
-                        onFocus: onFocus,
-                        onReplaceSurface: onReplaceSurface,
-                        onSplit: onSplit,
-                        onCreateTerminal: onCreateTerminal
-                    )
-                }
-            }
-        case nil:
+        } else {
             surfaceView(.empty, panelID: node.id)
         }
+    }
+
+    private func horizontalSplitView(
+        firstChild: PanelNode,
+        secondChild: PanelNode,
+        size: CGSize
+    ) -> some View {
+        let dividerLength = SplitPanelDivider.length
+        let firstWidth = max(0, (size.width - dividerLength) * node.normalizedRatio)
+        let secondWidth = max(0, size.width - dividerLength - firstWidth)
+
+        return HStack(spacing: 0) {
+            childView(firstChild)
+                .frame(width: firstWidth, height: size.height)
+            splitDivider(
+                direction: .horizontal,
+                length: size.height,
+                axisLength: max(size.width - dividerLength, 1)
+            )
+            childView(secondChild)
+                .frame(width: secondWidth, height: size.height)
+        }
+    }
+
+    private func verticalSplitView(
+        firstChild: PanelNode,
+        secondChild: PanelNode,
+        size: CGSize
+    ) -> some View {
+        let dividerLength = SplitPanelDivider.length
+        let firstHeight = max(0, (size.height - dividerLength) * node.normalizedRatio)
+        let secondHeight = max(0, size.height - dividerLength - firstHeight)
+
+        return VStack(spacing: 0) {
+            childView(firstChild)
+                .frame(width: size.width, height: firstHeight)
+            splitDivider(
+                direction: .vertical,
+                length: size.width,
+                axisLength: max(size.height - dividerLength, 1)
+            )
+            childView(secondChild)
+                .frame(width: size.width, height: secondHeight)
+        }
+    }
+
+    private func childView(_ child: PanelNode) -> some View {
+        SplitPanelView(
+            node: child,
+            focusedPanelID: focusedPanelID,
+            documentSessionStore: documentSessionStore,
+            documentFileWatchStore: documentFileWatchStore,
+            previewSessionStore: previewSessionStore,
+            documentTextStore: documentTextStore,
+            terminalSessionController: terminalSessionController,
+            terminalOutputStore: terminalOutputStore,
+            notifications: notifications,
+            onFocus: onFocus,
+            onReplaceSurface: onReplaceSurface,
+            onSplit: onSplit,
+            onCreateTerminal: onCreateTerminal,
+            onUpdateSplitRatio: onUpdateSplitRatio
+        )
+    }
+
+    private func splitDivider(
+        direction: SplitDirection,
+        length: CGFloat,
+        axisLength: CGFloat
+    ) -> some View {
+        SplitPanelDivider(direction: direction)
+            .frame(
+                width: direction == .horizontal ? SplitPanelDivider.length : length,
+                height: direction == .horizontal ? length : SplitPanelDivider.length
+            )
+            .gesture(splitDragGesture(direction: direction, axisLength: axisLength))
+    }
+
+    private func splitDragGesture(direction: SplitDirection, axisLength: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if dragStartRatio == nil {
+                    dragStartRatio = node.normalizedRatio
+                }
+
+                let delta = direction == .horizontal
+                    ? value.translation.width
+                    : value.translation.height
+                let ratioDelta = Double(delta / axisLength)
+                let newRatio = (dragStartRatio ?? node.normalizedRatio) + ratioDelta
+
+                onUpdateSplitRatio(node.id, PanelNode.clampedRatio(newRatio))
+            }
+            .onEnded { _ in
+                dragStartRatio = nil
+            }
     }
 
     @ViewBuilder
@@ -132,6 +209,20 @@ struct SplitPanelView: View {
         .onTapGesture {
             onFocus(panelID)
         }
+    }
+}
+
+private struct SplitPanelDivider: View {
+    static let length: CGFloat = 6
+
+    var direction: SplitDirection
+
+    var body: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor).opacity(0.8))
+            .contentShape(Rectangle())
+            .accessibilityLabel(direction == .horizontal ? "Resize columns" : "Resize rows")
+            .accessibilityHint("Drag to resize adjacent panels")
     }
 }
 

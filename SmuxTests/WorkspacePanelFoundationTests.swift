@@ -90,6 +90,33 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(replaced, split)
     }
 
+    func testPanelNodeUpdatesNestedSplitRatioAndClampsValue() {
+        let rootSplitID = UUID()
+        let nestedSplitID = UUID()
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let thirdPanelID = UUID()
+        let tree = PanelNode.split(
+            id: rootSplitID,
+            direction: .horizontal,
+            ratio: 0.4,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .split(
+                id: nestedSplitID,
+                direction: .vertical,
+                ratio: 0.5,
+                first: .leaf(id: secondPanelID, surface: .empty),
+                second: .leaf(id: thirdPanelID, surface: .empty)
+            )
+        )
+
+        let updatedTree = tree.updatingSplitRatio(splitID: nestedSplitID, ratio: 1.4)
+
+        XCTAssertEqual(updatedTree?.ratio, 0.4)
+        XCTAssertEqual(updatedTree?.children.last?.ratio, 0.9)
+        XCTAssertEqual(updatedTree?.leafIDs, [firstPanelID, secondPanelID, thirdPanelID])
+    }
+
     @MainActor
     func testPanelStoreSplitsFocusedPanelAndFocusesNewLeaf() {
         let rootID = UUID()
@@ -149,6 +176,28 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(store.focusedPanelID, firstPanelID)
         XCTAssertEqual(store.rootNode.kind, .split)
         XCTAssertEqual(store.rootNode.children.first?.surface, .terminal(sessionID: terminalID))
+    }
+
+    @MainActor
+    func testPanelStoreUpdatesSplitRatioAndIgnoresInvalidTargets() {
+        let splitID = UUID()
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let split = PanelNode.split(
+            id: splitID,
+            direction: .horizontal,
+            ratio: 0.5,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .leaf(id: secondPanelID, surface: .empty)
+        )
+        let store = PanelStore(rootNode: split, focusedPanelID: secondPanelID)
+
+        store.updateSplitRatio(splitID: splitID, ratio: 0.72)
+        store.updateSplitRatio(splitID: firstPanelID, ratio: 0.2)
+        store.updateSplitRatio(splitID: UUID(), ratio: 0.3)
+
+        XCTAssertEqual(store.rootNode.ratio, 0.72)
+        XCTAssertEqual(store.focusedPanelID, secondPanelID)
     }
 
     @MainActor
@@ -372,6 +421,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         let panelTree = PanelNode.split(
             direction: .horizontal,
+            ratio: 0.37,
             first: .leaf(id: firstPanelID, surface: .terminal(sessionID: terminalID)),
             second: .leaf(id: secondPanelID, surface: .editor(documentID: documentID))
         )
@@ -383,6 +433,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(decoded.schemaVersion, WorkspaceSnapshot.currentSchemaVersion)
         XCTAssertEqual(decoded.workspaceID, workspaceID)
         XCTAssertEqual(decoded.panelTree, panelTree)
+        XCTAssertEqual(decoded.panelTree?.ratio, 0.37)
         XCTAssertEqual(decoded.leftRailState.selectedWorkspaceID, workspaceID)
         XCTAssertEqual(decoded.leftRailState.selectedPanelID, firstPanelID)
         XCTAssertTrue(decoded.leftRailState.isFileTreeVisible)

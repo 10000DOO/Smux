@@ -85,7 +85,11 @@ extension PanelNode {
     }
 
     var normalizedRatio: Double {
-        min(max(ratio ?? 0.5, 0.1), 0.9)
+        Self.clampedRatio(ratio ?? 0.5)
+    }
+
+    static func clampedRatio(_ ratio: Double) -> Double {
+        min(max(ratio, 0.1), 0.9)
     }
 
     var firstLeafID: ID? {
@@ -140,6 +144,44 @@ extension PanelNode {
             ratio: ratio,
             children: children.map { $0.replacingSurface(panelID: panelID, with: surface) }
         )
+    }
+
+    func updatingSplitRatio(splitID: ID, ratio: Double) -> PanelNode? {
+        if id == splitID, isSplit {
+            return PanelNode(
+                id: id,
+                kind: .split,
+                direction: direction,
+                ratio: Self.clampedRatio(ratio),
+                children: children
+            )
+        }
+
+        guard isSplit else {
+            return nil
+        }
+
+        for childIndex in children.indices {
+            guard let updatedChild = children[childIndex].updatingSplitRatio(
+                splitID: splitID,
+                ratio: ratio
+            ) else {
+                continue
+            }
+
+            var updatedChildren = children
+            updatedChildren[childIndex] = updatedChild
+
+            return PanelNode(
+                id: id,
+                kind: .split,
+                direction: direction,
+                ratio: self.ratio,
+                children: updatedChildren
+            )
+        }
+
+        return nil
     }
 
     func splittingLeaf(

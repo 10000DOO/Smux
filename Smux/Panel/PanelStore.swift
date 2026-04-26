@@ -74,6 +74,17 @@ final class PanelStore: ObservableObject, PanelCommanding {
         focusedPanelID = panelID
     }
 
+    func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {
+        guard let updatedRootNode = rootNode.updatingSplitRatio(
+            splitID: splitID,
+            ratio: ratio
+        ) else {
+            return
+        }
+
+        rootNode = updatedRootNode
+    }
+
     func reset(to rootNode: PanelNode = .placeholder) {
         self.rootNode = rootNode
         focusedPanelID = rootNode.firstLeafID
