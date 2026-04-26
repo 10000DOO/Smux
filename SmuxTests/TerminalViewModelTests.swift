@@ -141,6 +141,53 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertTrue(inputs.isEmpty)
     }
 
+    func testTerminalTextViewCommitsIMEInsertTextToInputHandler() {
+        let textView = TerminalTextView()
+        var inputs: [String] = []
+        textView.inputHandler = { inputs.append($0) }
+
+        textView.insertText(
+            NSAttributedString(string: "한"),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        XCTAssertEqual(inputs, ["한"])
+        XCTAssertFalse(textView.hasMarkedText())
+    }
+
+    func testTerminalTextViewDoesNotForwardMarkedIMEText() {
+        let textView = TerminalTextView()
+        var inputs: [String] = []
+        textView.inputHandler = { inputs.append($0) }
+
+        textView.setMarkedText(
+            "ㅎ",
+            selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        XCTAssertTrue(textView.hasMarkedText())
+        XCTAssertEqual(textView.markedRange(), NSRange(location: 0, length: 1))
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 1, length: 0))
+        XCTAssertTrue(inputs.isEmpty)
+
+        textView.insertText(
+            "한",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+
+        XCTAssertEqual(inputs, ["한"])
+        XCTAssertFalse(textView.hasMarkedText())
+    }
+
+    func testTerminalTextViewPreservesSelectionRangeOutsideIMEComposition() {
+        let textView = TerminalTextView()
+        textView.string = "output"
+        textView.setSelectedRange(NSRange(location: 1, length: 3))
+
+        XCTAssertEqual(textView.selectedRange(), NSRange(location: 1, length: 3))
+    }
+
     func testAttributedRendererAppliesTerminalStyles() throws {
         let style = TerminalTextStyle(
             foreground: .ansi(.red),

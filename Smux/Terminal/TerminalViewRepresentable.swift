@@ -228,6 +228,8 @@ enum TerminalAttributedTextRenderer {
 
 final class TerminalTextView: NSTextView {
     var inputHandler: ((String) -> Void)?
+    private var terminalMarkedText = ""
+    private var terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
 
     override var acceptsFirstResponder: Bool {
         true
@@ -245,13 +247,89 @@ final class TerminalTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = TerminalInputModifiers(event.modifierFlags)
-        guard let key = TerminalInputKey(event: event),
-              let input = TerminalInputTranslator.input(for: key, modifiers: modifiers) else {
+        guard !modifiers.contains(.command) else {
             super.keyDown(with: event)
             return
         }
 
+        guard let key = TerminalInputKey(event: event) else {
+            interpretKeyEvents([event])
+            return
+        }
+
+        switch key {
+        case .text:
+            interpretKeyEvents([event])
+        default:
+            if let input = TerminalInputTranslator.input(for: key, modifiers: modifiers) {
+                inputHandler?(input)
+            } else {
+                super.keyDown(with: event)
+            }
+        }
+    }
+
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        terminalMarkedText = ""
+        terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
+
+        guard let input = TerminalInputTextExtractor.text(from: insertString), !input.isEmpty else {
+            return
+        }
+
         inputHandler?(input)
+    }
+
+    override func setMarkedText(
+        _ string: Any,
+        selectedRange: NSRange,
+        replacementRange: NSRange
+    ) {
+        terminalMarkedText = TerminalInputTextExtractor.text(from: string) ?? ""
+        terminalMarkedSelectedRange = selectedRange
+    }
+
+    override func unmarkText() {
+        terminalMarkedText = ""
+        terminalMarkedSelectedRange = NSRange(location: 0, length: 0)
+    }
+
+    override func hasMarkedText() -> Bool {
+        !terminalMarkedText.isEmpty
+    }
+
+    override func markedRange() -> NSRange {
+        guard hasMarkedText() else {
+            return NSRange(location: NSNotFound, length: 0)
+        }
+
+        return NSRange(location: 0, length: (terminalMarkedText as NSString).length)
+    }
+
+    override func selectedRange() -> NSRange {
+        guard hasMarkedText() else {
+            return super.selectedRange()
+        }
+
+        return terminalMarkedSelectedRange
+    }
+
+    override func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        []
+    }
+
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        actualRange?.pointee = range
+        guard let window else {
+            return .zero
+        }
+
+        let localRect = bounds.isEmpty ? NSRect(origin: .zero, size: NSSize(width: 1, height: 1)) : bounds
+        return window.convertToScreen(convert(localRect, to: nil))
+    }
+
+    override func characterIndex(for point: NSPoint) -> Int {
+        0
     }
 
     override func paste(_ sender: Any?) {
@@ -297,6 +375,20 @@ final class TerminalTextView: NSTextView {
         }
 
         layoutManager?.ensureLayout(for: textContainer)
+    }
+}
+
+nonisolated enum TerminalInputTextExtractor {
+    static func text(from value: Any) -> String? {
+        if let string = value as? String {
+            return string
+        }
+
+        if let attributedString = value as? NSAttributedString {
+            return attributedString.string
+        }
+
+        return nil
     }
 }
 
