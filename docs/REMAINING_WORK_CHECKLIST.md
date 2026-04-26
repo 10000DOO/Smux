@@ -40,7 +40,7 @@ Last updated: 2026-04-26
 | --- | --- | --- |
 | P0-1 | 외부 파일 변경 감지와 editor/preview 반영 | Implemented and verified |
 | P0-2 | panel splitter size 조절 및 ratio 복원 | Implemented and verified |
-| P0-3 | terminal 호환성 고도화 | Alternate screen and clear/cursor fixtures improved; xterm parity incomplete |
+| P0-3 | terminal 호환성 고도화 | Alternate screen, clear/cursor, and wide-cell fixtures improved; xterm parity incomplete |
 | P0-4 | Mermaid sample fixture와 offline render 검증 | Fixture/offline HTML tests verified; WebView pixel verification remains |
 | P0-5 | performance/memory measurement | No automated benchmark yet |
 | P1-1 | editor Markdown syntax highlight | Not started |
@@ -96,7 +96,7 @@ Suggested write set:
 - [ ] Add ANSI color/style attributed rendering or adopt a terminal renderer engine.
 - [x] Support common alternate screen buffer behavior through `?1049h/l`.
 - [x] Improve cursor movement overwrite and clear line/screen region behavior.
-- [ ] Improve wide character cell-width handling.
+- [x] Improve wide character cell-width handling.
 - [ ] Validate IME input path.
 - [x] Add focused terminal fixture tests for cursor, clear, and alternate screen behavior.
 
@@ -183,6 +183,7 @@ editor/preview UI changes.
 - [x] PTY terminal session lifecycle.
 - [x] Terminal display buffer and basic ANSI cleanup.
 - [x] Terminal alternate screen, cursor overwrite, and clear region fixture coverage.
+- [x] Terminal wide character display-cell cursor handling.
 - [x] Terminal key input and paste handling.
 - [x] Markdown/Mermaid editor panel.
 - [x] Autosave core and explicit save UI.

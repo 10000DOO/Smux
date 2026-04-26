@@ -83,6 +83,38 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "helXY")
     }
 
+    func testWideCharacterCursorMovementUsesDisplayCells() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("한b\u{1B}[3G!")
+
+        XCTAssertEqual(buffer.text, "한!")
+    }
+
+    func testWritingInsideWideCharacterBlanksCoveredCell() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("한b\u{1B}[2D!")
+
+        XCTAssertEqual(buffer.text, " !b")
+    }
+
+    func testWideCharacterBackspaceRemovesWholeCell() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("한\u{08}A")
+
+        XCTAssertEqual(buffer.text, "A")
+    }
+
+    func testClearLineToCursorPreservesWideCellWidth() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("한ab\u{1B}[3G\u{1B}[1KZ")
+
+        XCTAssertEqual(buffer.text, "  Zb")
+    }
+
     func testAlternateScreenRestoresPrimaryDisplayAndCursor() {
         var buffer = TerminalDisplayBuffer()
 

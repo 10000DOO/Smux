@@ -5,7 +5,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
 
     let maximumCharacterCount: Int
 
-    private var lines: [[Character]]
+    private var lines: [[DisplayCell]]
     private var cursorLineIndex: Int
     private var cursorColumn: Int
     private var parserState: ParserState = .normal
@@ -13,7 +13,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
     private var primaryScreenSnapshot: ScreenSnapshot?
 
     var text: String {
-        lines.map { String($0) }.joined(separator: "\n")
+        lines.map { line in String(line.map(\.character)) }.joined(separator: "\n")
     }
 
     init(
@@ -181,16 +181,16 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         beginVisibleWrite()
         ensureCursorLine()
 
-        if cursorColumn > lines[cursorLineIndex].count {
-            lines[cursorLineIndex].append(contentsOf: Array(repeating: " ", count: cursorColumn - lines[cursorLineIndex].count))
-        }
+        let cell = DisplayCell(character: character, width: displayWidth(of: character))
+        let writeRange = cursorColumn..<(cursorColumn + cell.width)
 
-        if cursorColumn < lines[cursorLineIndex].count {
-            lines[cursorLineIndex][cursorColumn] = character
-        } else {
-            lines[cursorLineIndex].append(character)
-        }
-        cursorColumn += 1
+        padCursorLine(to: cursorColumn)
+        lines[cursorLineIndex] = replacingColumns(
+            in: lines[cursorLineIndex],
+            range: writeRange,
+            with: [cell]
+        )
+        cursorColumn += cell.width
     }
 
     private mutating func writeTab() {
@@ -215,13 +215,20 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         guard cursorColumn > 0 else {
             return
         }
+        ensureCursorLine()
 
-        cursorColumn -= 1
-        guard cursorColumn < lines[cursorLineIndex].count else {
-            return
+        var displayColumn = 0
+        for (cellIndex, cell) in lines[cursorLineIndex].enumerated() {
+            let nextDisplayColumn = displayColumn + cell.width
+            if nextDisplayColumn >= cursorColumn {
+                cursorColumn = displayColumn
+                lines[cursorLineIndex].remove(at: cellIndex)
+                return
+            }
+            displayColumn = nextDisplayColumn
         }
 
-        lines[cursorLineIndex].remove(at: cursorColumn)
+        cursorColumn = max(0, cursorColumn - 1)
     }
 
     private mutating func beginVisibleWrite() {
@@ -240,17 +247,11 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
 
         switch parameterValue(parameters, at: 0, defaultValue: 0) {
         case 1:
-            replaceWithSpaces(
-                lineIndex: cursorLineIndex,
-                range: 0..<min(cursorColumn + 1, lines[cursorLineIndex].count)
-            )
+            replaceFromStartThroughCursorWithSpaces(lineIndex: cursorLineIndex)
         case 2:
             lines[cursorLineIndex].removeAll(keepingCapacity: true)
         default:
-            guard cursorColumn < lines[cursorLineIndex].count else {
-                return
-            }
-            lines[cursorLineIndex].removeSubrange(cursorColumn..<lines[cursorLineIndex].count)
+            removeFromCursorToEnd(lineIndex: cursorLineIndex)
         }
     }
 
@@ -278,9 +279,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         carriageReturnPending = false
         ensureCursorLine()
 
-        if cursorColumn < lines[cursorLineIndex].count {
-            lines[cursorLineIndex].removeSubrange(cursorColumn..<lines[cursorLineIndex].count)
-        }
+        removeFromCursorToEnd(lineIndex: cursorLineIndex)
 
         let nextLineIndex = cursorLineIndex + 1
         if nextLineIndex < lines.count {
@@ -298,20 +297,30 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             }
         }
 
-        replaceWithSpaces(
-            lineIndex: cursorLineIndex,
-            range: 0..<min(cursorColumn + 1, lines[cursorLineIndex].count)
-        )
+        replaceFromStartThroughCursorWithSpaces(lineIndex: cursorLineIndex)
     }
 
-    private mutating func replaceWithSpaces(lineIndex: Int, range: Range<Int>) {
-        guard lines.indices.contains(lineIndex), !range.isEmpty else {
+    private mutating func removeFromCursorToEnd(lineIndex: Int) {
+        guard lines.indices.contains(lineIndex) else {
             return
         }
 
-        for characterIndex in range where lines[lineIndex].indices.contains(characterIndex) {
-            lines[lineIndex][characterIndex] = " "
+        lines[lineIndex] = prefixPreservingColumns(
+            in: lines[lineIndex],
+            before: cursorColumn
+        )
+    }
+
+    private mutating func replaceFromStartThroughCursorWithSpaces(lineIndex: Int) {
+        guard lines.indices.contains(lineIndex) else {
+            return
         }
+
+        let prefix = prefixCoveringColumns(
+            in: lines[lineIndex],
+            upTo: cursorColumn + 1
+        )
+        lines[lineIndex] = spaceCells(count: prefix.width) + Array(lines[lineIndex].dropFirst(prefix.endIndex))
     }
 
     private mutating func setPrivateMode(parameters: String, enabled: Bool) {
@@ -357,7 +366,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
     private mutating func moveCursorVertically(by offset: Int) {
         ensureCursorLine()
         cursorLineIndex = min(max(0, cursorLineIndex + offset), lines.count - 1)
-        cursorColumn = min(cursorColumn, lines[cursorLineIndex].count)
+        cursorColumn = min(cursorColumn, displayWidth(of: lines[cursorLineIndex]))
         carriageReturnPending = false
     }
 
@@ -392,19 +401,122 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             if lines.count > 1 {
                 lines.removeFirst()
                 cursorLineIndex = max(0, cursorLineIndex - 1)
+            } else if let removedCell = lines[0].first {
+                lines[0].removeFirst()
+                cursorColumn = max(0, cursorColumn - removedCell.width)
             } else {
-                let overflow = lines[0].count - maximumCharacterCount
-                guard overflow > 0 else {
-                    break
-                }
-                lines[0].removeFirst(overflow)
-                cursorColumn = max(0, cursorColumn - overflow)
+                break
             }
         }
 
         ensureCursorLine()
         cursorLineIndex = min(cursorLineIndex, lines.count - 1)
-        cursorColumn = min(cursorColumn, lines[cursorLineIndex].count)
+        cursorColumn = min(cursorColumn, displayWidth(of: lines[cursorLineIndex]))
+    }
+
+    private mutating func padCursorLine(to column: Int) {
+        let missingWidth = column - displayWidth(of: lines[cursorLineIndex])
+        guard missingWidth > 0 else {
+            return
+        }
+
+        lines[cursorLineIndex].append(contentsOf: spaceCells(count: missingWidth))
+    }
+
+    private func replacingColumns(
+        in line: [DisplayCell],
+        range: Range<Int>,
+        with replacement: [DisplayCell]
+    ) -> [DisplayCell] {
+        var result: [DisplayCell] = []
+        var insertedReplacement = false
+        var displayColumn = 0
+
+        for cell in line {
+            let nextDisplayColumn = displayColumn + cell.width
+
+            if nextDisplayColumn <= range.lowerBound {
+                result.append(cell)
+            } else if displayColumn >= range.upperBound {
+                if !insertedReplacement {
+                    result.append(contentsOf: replacement)
+                    insertedReplacement = true
+                }
+                result.append(cell)
+            } else {
+                if displayColumn < range.lowerBound {
+                    result.append(contentsOf: spaceCells(count: range.lowerBound - displayColumn))
+                }
+                if !insertedReplacement {
+                    result.append(contentsOf: replacement)
+                    insertedReplacement = true
+                }
+                if nextDisplayColumn > range.upperBound {
+                    result.append(contentsOf: spaceCells(count: nextDisplayColumn - range.upperBound))
+                }
+            }
+
+            displayColumn = nextDisplayColumn
+        }
+
+        if !insertedReplacement {
+            result.append(contentsOf: replacement)
+        }
+
+        return result
+    }
+
+    private func prefixPreservingColumns(in line: [DisplayCell], before columnLimit: Int) -> [DisplayCell] {
+        var result: [DisplayCell] = []
+        var displayColumn = 0
+
+        for cell in line {
+            let nextDisplayColumn = displayColumn + cell.width
+            if nextDisplayColumn <= columnLimit {
+                result.append(cell)
+            } else {
+                if displayColumn < columnLimit {
+                    result.append(contentsOf: spaceCells(count: columnLimit - displayColumn))
+                }
+                break
+            }
+            displayColumn = nextDisplayColumn
+        }
+
+        return result
+    }
+
+    private func prefixCoveringColumns(in line: [DisplayCell], upTo columnLimit: Int) -> (width: Int, endIndex: Int) {
+        guard columnLimit > 0 else {
+            return (0, 0)
+        }
+
+        var displayWidth = 0
+        for (cellIndex, cell) in line.enumerated() {
+            guard displayWidth < columnLimit else {
+                return (displayWidth, cellIndex)
+            }
+
+            displayWidth += cell.width
+        }
+
+        return (displayWidth, line.count)
+    }
+
+    private func spaceCells(count: Int) -> [DisplayCell] {
+        guard count > 0 else {
+            return []
+        }
+
+        return Array(repeating: DisplayCell(character: " ", width: 1), count: count)
+    }
+
+    private func displayWidth(of line: [DisplayCell]) -> Int {
+        line.reduce(0) { $0 + $1.width }
+    }
+
+    private func displayWidth(of character: Character) -> Int {
+        character.unicodeScalars.contains(where: isWideScalar) ? 2 : 1
     }
 
     private func parameterValue(_ parameters: String, at index: Int, defaultValue: Int) -> Int {
@@ -445,6 +557,25 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         (0x40...0x7E).contains(Int(scalar.value))
     }
 
+    private func isWideScalar(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x115F,
+             0x2329...0x232A,
+             0x2E80...0xA4CF,
+             0xAC00...0xD7A3,
+             0xF900...0xFAFF,
+             0xFE10...0xFE19,
+             0xFE30...0xFE6F,
+             0xFF00...0xFF60,
+             0xFFE0...0xFFE6,
+             0x1F000...0x1FAFF,
+             0x20000...0x3FFFD:
+            return true
+        default:
+            return false
+        }
+    }
+
     private enum ParserState: Equatable {
         case normal
         case escape
@@ -454,9 +585,14 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
     }
 
     private struct ScreenSnapshot: Equatable {
-        var lines: [[Character]]
+        var lines: [[DisplayCell]]
         var cursorLineIndex: Int
         var cursorColumn: Int
         var carriageReturnPending: Bool
+    }
+
+    private struct DisplayCell: Equatable {
+        var character: Character
+        var width: Int
     }
 }
