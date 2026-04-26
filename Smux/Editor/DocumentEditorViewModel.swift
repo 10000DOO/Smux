@@ -6,6 +6,7 @@ final class DocumentEditorViewModel: ObservableObject {
     @Published var session: DocumentSession?
     @Published var text = ""
     @Published var selectedRange: NSRange?
+    @Published private(set) var lastSaveResult: DocumentSaveResult?
 
     private let sessionStore: any DocumentSessionStoring
     private let fileIO: any DocumentFileIO
@@ -33,6 +34,7 @@ final class DocumentEditorViewModel: ObservableObject {
 
         text = loadedDocument.text
         selectedRange = NSRange(location: 0, length: 0)
+        lastSaveResult = nil
         session = loadedSession
         sessionStore.upsertSession(loadedSession)
     }
@@ -58,6 +60,7 @@ final class DocumentEditorViewModel: ObservableObject {
         currentSession.saveState = .dirty
         currentSession.conflict = nil
 
+        lastSaveResult = nil
         session = currentSession
         sessionStore.upsertSession(currentSession)
     }
@@ -67,12 +70,40 @@ final class DocumentEditorViewModel: ObservableObject {
     }
 
     func saveNow() async throws {
+        let outcome = await saveCurrentSession()
+        lastSaveResult = outcome.result
+
+        if let error = outcome.error {
+            throw error
+        }
+    }
+
+    func saveNowResult() async -> DocumentSaveResult {
+        let outcome = await saveCurrentSession()
+        lastSaveResult = outcome.result
+
+        return outcome.result
+    }
+
+    private func saveCurrentSession() async -> (result: DocumentSaveResult, error: (any Error)?) {
         guard var currentSession = session else {
-            throw DocumentEditorError.missingSession
+            return (
+                DocumentSaveResult.failed(
+                    documentID: nil,
+                    failure: DocumentSaveFailure(documentEditorError: .missingSession)
+                ),
+                DocumentEditorError.missingSession
+            )
         }
 
         guard !savingSessionIDs.contains(currentSession.id) else {
-            throw DocumentEditorError.saveAlreadyInProgress
+            return (
+                DocumentSaveResult.failed(
+                    documentID: currentSession.id,
+                    failure: DocumentSaveFailure(documentEditorError: .saveAlreadyInProgress)
+                ),
+                DocumentEditorError.saveAlreadyInProgress
+            )
         }
         savingSessionIDs.insert(currentSession.id)
         defer {
@@ -101,7 +132,12 @@ final class DocumentEditorViewModel: ObservableObject {
 
                 session = currentSession
                 sessionStore.upsertSession(currentSession)
-                throw DocumentEditorError.conflicted(conflict)
+                let error = DocumentEditorError.conflicted(conflict)
+
+                return (
+                    DocumentSaveResult.conflicted(documentID: currentSession.id, conflict: conflict),
+                    error
+                )
             }
 
             let fingerprint = try await fileIO.saveText(saveText, to: currentSession.url)
@@ -123,11 +159,13 @@ final class DocumentEditorViewModel: ObservableObject {
                 session = latestSession
             }
             sessionStore.upsertSession(latestSession)
-        } catch {
-            if case DocumentEditorError.conflicted = error {
-                throw error
+
+            if latestSession.saveState == .clean {
+                return (DocumentSaveResult.saved(documentID: currentSession.id), nil)
             }
 
+            return (DocumentSaveResult.dirty(documentID: currentSession.id), nil)
+        } catch {
             var failedSession = session?.id == currentSession.id
                 ? session ?? currentSession
                 : sessionStore.session(for: currentSession.id) ?? currentSession
@@ -138,7 +176,14 @@ final class DocumentEditorViewModel: ObservableObject {
                 session = failedSession
             }
             sessionStore.upsertSession(failedSession)
-            throw error
+
+            return (
+                DocumentSaveResult.failed(
+                    documentID: currentSession.id,
+                    failure: DocumentSaveFailure(error: error)
+                ),
+                error
+            )
         }
     }
 }
@@ -160,5 +205,29 @@ enum DocumentEditorError: LocalizedError, Equatable {
         case .conflicted:
             return "Document has external changes on disk."
         }
+    }
+}
+
+extension DocumentSaveFailure {
+    init(documentEditorError: DocumentEditorError) {
+        switch documentEditorError {
+        case .sessionNotFound:
+            self.init(kind: .sessionNotFound, message: documentEditorError.localizedDescription)
+        case .missingSession:
+            self.init(kind: .missingSession, message: documentEditorError.localizedDescription)
+        case .saveAlreadyInProgress:
+            self.init(kind: .saveAlreadyInProgress, message: documentEditorError.localizedDescription)
+        case .conflicted:
+            self.init(kind: .conflicted, message: documentEditorError.localizedDescription)
+        }
+    }
+
+    init(error: any Error) {
+        if let documentEditorError = error as? DocumentEditorError {
+            self.init(documentEditorError: documentEditorError)
+            return
+        }
+
+        self.init(kind: .fileIO, message: error.localizedDescription)
     }
 }

@@ -23,7 +23,7 @@ final class TerminalViewModel: ObservableObject {
         self.session = session
         self.terminalCore = terminalCore
         self.outputBuffer = outputBuffer
-        self.visibleOutput = outputBuffer.text
+        self.visibleOutput = outputBuffer.displayText
         updateMetadata()
     }
 
@@ -47,17 +47,17 @@ final class TerminalViewModel: ObservableObject {
 
     func appendOutput(_ text: String) {
         outputBuffer.append(text)
-        visibleOutput = outputBuffer.text
+        visibleOutput = outputBuffer.displayText
     }
 
     func appendOutput(_ data: Data) {
         outputBuffer.append(data)
-        visibleOutput = outputBuffer.text
+        visibleOutput = outputBuffer.displayText
     }
 
     func clearOutput() {
         outputBuffer.clear()
-        visibleOutput = outputBuffer.text
+        visibleOutput = outputBuffer.displayText
     }
 
     private func refreshSession() {

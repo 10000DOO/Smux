@@ -393,7 +393,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             displayName: "RecentOneAgain",
             openedAt: Date(timeIntervalSince1970: 3)
         )
-        let store = RecentWorkspaceStore()
+        let store = RecentWorkspaceStore(repository: NoopRecentWorkspaceRepository())
 
         store.noteOpened(first)
         store.noteOpened(second)
@@ -405,6 +405,32 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         store.remove(id: second.id)
 
         XCTAssertEqual(store.recentWorkspaces.map(\.id), [sameRootAsFirst.id])
+    }
+
+    @MainActor
+    func testRecentWorkspaceStorePersistsRoundTrip() throws {
+        let baseURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("SmuxRecentWorkspaceTests-\(UUID().uuidString)", isDirectory: true)
+        let fileURL = baseURL.appendingPathComponent("RecentWorkspaces.json", isDirectory: false)
+        let repository = FileBackedRecentWorkspaceRepository(fileURL: fileURL)
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: baseURL.appendingPathComponent("Persisted Workspace", isDirectory: true),
+            openedAt: Date(timeIntervalSince1970: 42)
+        )
+
+        defer {
+            try? FileManager.default.removeItem(at: baseURL)
+        }
+
+        let store = RecentWorkspaceStore(repository: repository)
+        store.noteOpened(workspace)
+
+        let reloadedStore = RecentWorkspaceStore(repository: repository)
+
+        XCTAssertEqual(reloadedStore.recentWorkspaces, store.recentWorkspaces)
+        XCTAssertEqual(reloadedStore.recentWorkspaces.first?.id, workspace.id)
+        XCTAssertEqual(reloadedStore.recentWorkspaces.first?.displayName, workspace.displayName)
     }
 
     @MainActor
@@ -465,12 +491,13 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let panelStore = PanelStore(rootNode: activePanelTree)
         let documentSessionStore = DocumentSessionStore()
         let previewSessionStore = PreviewSessionStore()
-        let recentStore = RecentWorkspaceStore()
+        let recentStore = RecentWorkspaceStore(repository: NoopRecentWorkspaceRepository())
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             workspaceRepository: repository,
             recentWorkspaceStore: recentStore,
+            gitBranchProvider: NoopGitBranchProvider(),
             documentSessionStore: documentSessionStore,
             previewSessionStore: previewSessionStore
         )
@@ -493,6 +520,23 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorOpenSetsDetectedGitBranch() async throws {
+        let rootURL = URL(fileURLWithPath: "/tmp/GitBranchWorkspace")
+        let workspaceStore = WorkspaceStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: PanelStore(),
+            workspaceRepository: NoopWorkspaceRepository(),
+            gitBranchProvider: FixedGitBranchProvider(result: .branch("feature/workspaces"))
+        )
+
+        try await coordinator.openWorkspace(rootURL: rootURL)
+
+        XCTAssertEqual(workspaceStore.activeWorkspace?.rootURL, rootURL)
+        XCTAssertEqual(workspaceStore.activeWorkspace?.gitBranch, "feature/workspaces")
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorRejectsReentrantOpenAndDoesNotCommitSecondWorkspace() async throws {
         let firstRootURL = URL(fileURLWithPath: "/tmp/ReentrantFirst")
         let secondRootURL = URL(fileURLWithPath: "/tmp/ReentrantSecond")
@@ -502,7 +546,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
-            workspaceRepository: repository
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider()
         )
 
         let firstOpenTask = Task { @MainActor in
@@ -538,7 +583,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
-            workspaceRepository: repository
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider()
         )
 
         try await coordinator.openWorkspace(rootURL: rootURL)
@@ -696,7 +742,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             zoom: 1,
             scrollAnchor: nil
         )
-        let recentStore = RecentWorkspaceStore()
+        let recentStore = RecentWorkspaceStore(repository: NoopRecentWorkspaceRepository())
         let coordinator = WorkspaceCoordinator(
             workspaceStore: workspaceStore,
             panelStore: panelStore,
@@ -851,6 +897,14 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         private func key(for rootURL: URL) -> String {
             rootURL.standardizedFileURL.path
+        }
+    }
+
+    private struct FixedGitBranchProvider: GitBranchProviding {
+        var result: GitBranchLookupResult
+
+        func currentBranch(for rootURL: URL) async -> GitBranchLookupResult {
+            result
         }
     }
 

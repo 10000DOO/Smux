@@ -11,6 +11,19 @@ nonisolated struct RecentWorkspace: Identifiable, Codable, Hashable {
 @MainActor
 final class RecentWorkspaceStore: ObservableObject {
     @Published var recentWorkspaces: [RecentWorkspace] = []
+    @Published private(set) var persistenceErrorMessage: String?
+
+    private let repository: any RecentWorkspaceRepository
+
+    init(repository: any RecentWorkspaceRepository = FileBackedRecentWorkspaceRepository()) {
+        self.repository = repository
+
+        do {
+            recentWorkspaces = try repository.loadRecentWorkspaces()
+        } catch {
+            persistenceErrorMessage = error.localizedDescription
+        }
+    }
 
     func noteOpened(_ workspace: Workspace) {
         let rootURL = workspace.rootURL.standardizedFileURL
@@ -28,9 +41,21 @@ final class RecentWorkspaceStore: ObservableObject {
             ),
             at: 0
         )
+
+        saveRecentWorkspaces()
     }
 
     func remove(id: Workspace.ID) {
         recentWorkspaces.removeAll { $0.id == id }
+        saveRecentWorkspaces()
+    }
+
+    private func saveRecentWorkspaces() {
+        do {
+            try repository.saveRecentWorkspaces(recentWorkspaces)
+            persistenceErrorMessage = nil
+        } catch {
+            persistenceErrorMessage = error.localizedDescription
+        }
     }
 }

@@ -104,6 +104,8 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(viewModel.session?.textVersion, 1)
         XCTAssertEqual(viewModel.session?.fileFingerprint?.size, Int64(Data("Saved body".utf8).count))
         XCTAssertNotNil(viewModel.session?.fileFingerprint?.contentHash)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .clean)
+        XCTAssertNil(viewModel.lastSaveResult?.failure)
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
     }
 
@@ -144,6 +146,9 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(viewModel.session?.isDirty, true)
         XCTAssertEqual(viewModel.session?.conflict?.loadedFingerprint, loadedFingerprint)
         XCTAssertEqual(viewModel.session?.conflict?.currentFingerprint, diskFingerprint)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .conflicted)
+        XCTAssertEqual(viewModel.lastSaveResult?.conflict?.loadedFingerprint, loadedFingerprint)
+        XCTAssertNil(viewModel.lastSaveResult?.failure)
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
     }
 
@@ -182,6 +187,8 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(viewModel.session?.fileFingerprint, savedFingerprint)
         XCTAssertEqual(viewModel.session?.isDirty, true)
         XCTAssertEqual(viewModel.session?.saveState, .dirty)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .dirty)
+        XCTAssertNil(viewModel.lastSaveResult?.failure)
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
     }
 
@@ -249,7 +256,155 @@ final class EditorDocumentCoreTests: XCTestCase {
         XCTAssertEqual(viewModel.session?.isDirty, true)
         XCTAssertEqual(viewModel.session?.saveState, .failed)
         XCTAssertEqual(viewModel.session?.textVersion, 1)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .failed)
+        XCTAssertEqual(viewModel.lastSaveResult?.failure?.kind, .fileIO)
         XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testSaveNowResultReturnsFailureWithoutThrowing() async throws {
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/ResultFailure.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: makeFingerprint()),
+            saveError: EditorDocumentCoreTestError.saveFailed
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        let result = await viewModel.saveNowResult()
+
+        XCTAssertEqual(result.state, .failed)
+        XCTAssertEqual(result.failure?.kind, .fileIO)
+        XCTAssertEqual(viewModel.lastSaveResult, result)
+        XCTAssertEqual(viewModel.session?.saveState, .failed)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorDebouncesScheduledSave() async throws {
+        let documentID = DocumentSession.ID()
+        let recorder = AutoSaveRecorder()
+        let coordinator = AutoSaveCoordinator(debounceInterval: 0.01) { documentID in
+            await recorder.save(documentID: documentID)
+        }
+
+        coordinator.scheduleAutosave(for: documentID)
+        coordinator.scheduleAutosave(for: documentID)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let saveCount = await recorder.saveCount
+        let savedDocumentIDs = await recorder.savedDocumentIDs
+
+        XCTAssertEqual(saveCount, 1)
+        XCTAssertEqual(savedDocumentIDs, [documentID])
+        XCTAssertEqual(coordinator.status(for: documentID).state, .saved)
+        XCTAssertEqual(coordinator.status(for: documentID).result?.state, .clean)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorFlushRunsPendingSaveImmediately() async {
+        let documentID = DocumentSession.ID()
+        let recorder = AutoSaveRecorder()
+        let coordinator = AutoSaveCoordinator(debounceInterval: 10) { documentID in
+            await recorder.save(documentID: documentID)
+        }
+
+        coordinator.scheduleAutosave(for: documentID)
+        let result = await coordinator.flush(documentID: documentID)
+        let saveCount = await recorder.saveCount
+
+        XCTAssertEqual(result.state, .clean)
+        XCTAssertEqual(saveCount, 1)
+        XCTAssertEqual(coordinator.status(for: documentID).state, .saved)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorPropagatesConflictResult() async {
+        let documentID = DocumentSession.ID()
+        let conflict = DocumentConflict(
+            detectedAt: Date(timeIntervalSince1970: 3),
+            loadedFingerprint: makeFingerprint(contentHash: "loaded"),
+            currentFingerprint: makeFingerprint(contentHash: "external")
+        )
+        let coordinator = AutoSaveCoordinator(debounceInterval: 0) { documentID in
+            .conflicted(documentID: documentID, conflict: conflict)
+        }
+
+        let result = await coordinator.flush(documentID: documentID)
+
+        XCTAssertEqual(result.state, .conflicted)
+        XCTAssertEqual(result.conflict, conflict)
+        XCTAssertEqual(coordinator.status(for: documentID).state, .conflicted)
+        XCTAssertEqual(coordinator.status(for: documentID).conflict, conflict)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorPropagatesSaveFailureResult() async {
+        let documentID = DocumentSession.ID()
+        let failure = DocumentSaveFailure(kind: .fileIO, message: "Disk is unavailable.")
+        let coordinator = AutoSaveCoordinator(debounceInterval: 0) { documentID in
+            .failed(documentID: documentID, failure: failure)
+        }
+
+        let result = await coordinator.flush(documentID: documentID)
+
+        XCTAssertEqual(result.state, .failed)
+        XCTAssertEqual(result.failure, failure)
+        XCTAssertEqual(coordinator.status(for: documentID).state, .failed)
+        XCTAssertEqual(coordinator.status(for: documentID).failure, failure)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorCancelStopsPendingSave() async throws {
+        let documentID = DocumentSession.ID()
+        let recorder = AutoSaveRecorder()
+        let coordinator = AutoSaveCoordinator(debounceInterval: 0.05) { documentID in
+            await recorder.save(documentID: documentID)
+        }
+
+        coordinator.scheduleAutosave(for: documentID)
+        let status = coordinator.cancelAutosave(for: documentID)
+        try await Task.sleep(nanoseconds: 80_000_000)
+        let saveCount = await recorder.saveCount
+
+        XCTAssertEqual(status.state, .cancelled)
+        XCTAssertEqual(coordinator.status(for: documentID).state, .cancelled)
+        XCTAssertEqual(saveCount, 0)
+    }
+
+    @MainActor
+    func testAutoSaveCoordinatorRejectsConcurrentSave() async throws {
+        let documentID = DocumentSession.ID()
+        let saveGate = SaveGate()
+        let recorder = AutoSaveRecorder(saveGate: saveGate)
+        let coordinator = AutoSaveCoordinator(debounceInterval: 0) { documentID in
+            await recorder.save(documentID: documentID)
+        }
+
+        let firstSaveTask = Task { @MainActor in
+            await coordinator.save(documentID: documentID)
+        }
+        await saveGate.waitUntilWaiting()
+
+        let secondResult = await coordinator.save(documentID: documentID)
+
+        XCTAssertEqual(secondResult.state, .failed)
+        XCTAssertEqual(secondResult.failure?.kind, .saveAlreadyInProgress)
+        let blockedSaveCount = await recorder.saveCount
+
+        XCTAssertEqual(blockedSaveCount, 0)
+
+        await saveGate.resume()
+        let firstResult = await firstSaveTask.value
+        let completedSaveCount = await recorder.saveCount
+
+        XCTAssertEqual(firstResult.state, .clean)
+        XCTAssertEqual(completedSaveCount, 1)
+        XCTAssertEqual(coordinator.status(for: documentID).state, .saved)
     }
 
     private func makeFingerprint(
@@ -347,6 +502,32 @@ private actor SaveGate {
     func resume() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private actor AutoSaveRecorder {
+    private let saveGate: SaveGate?
+    private var documentIDs: [DocumentSession.ID] = []
+
+    init(saveGate: SaveGate? = nil) {
+        self.saveGate = saveGate
+    }
+
+    var saveCount: Int {
+        documentIDs.count
+    }
+
+    var savedDocumentIDs: [DocumentSession.ID] {
+        documentIDs
+    }
+
+    func save(documentID: DocumentSession.ID) async -> DocumentSaveResult {
+        if let saveGate {
+            await saveGate.wait()
+        }
+
+        documentIDs.append(documentID)
+        return .saved(documentID: documentID)
     }
 }
 

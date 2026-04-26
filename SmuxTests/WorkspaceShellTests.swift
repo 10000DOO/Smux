@@ -67,6 +67,33 @@ final class WorkspaceShellTests: XCTestCase {
         ])
     }
 
+    func testPanelNotificationBadgeSummaryCountsOnlyUnacknowledgedPanelBadges() {
+        let panelID = PanelNode.ID()
+        let otherPanelID = PanelNode.ID()
+        let workspaceID = Workspace.ID()
+        let notifications = [
+            workspaceNotification(workspaceID: workspaceID, panelID: panelID, shouldBadgePanel: true),
+            workspaceNotification(workspaceID: workspaceID, panelID: panelID, shouldBadgePanel: true),
+            workspaceNotification(workspaceID: workspaceID, panelID: panelID, shouldBadgePanel: false),
+            workspaceNotification(workspaceID: workspaceID, panelID: otherPanelID, shouldBadgePanel: true),
+            workspaceNotification(workspaceID: workspaceID, panelID: nil, shouldBadgePanel: false),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                shouldBadgePanel: true,
+                acknowledgedAt: Date(timeIntervalSince1970: 1)
+            )
+        ]
+
+        XCTAssertEqual(
+            PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
+                for: panelID,
+                notifications: notifications
+            ),
+            2
+        )
+    }
+
     @MainActor
     func testPanelStoreReplacesRequestedPanelWithoutPreFocusing() {
         let firstPanelID = UUID()
@@ -112,6 +139,27 @@ final class WorkspaceShellTests: XCTestCase {
         XCTAssertEqual(
             store.focusedPanelID,
             store.rootNode.children.last?.children.last?.id
+        )
+    }
+
+    private func workspaceNotification(
+        workspaceID: Workspace.ID,
+        panelID: PanelNode.ID?,
+        shouldBadgePanel: Bool,
+        acknowledgedAt: Date? = nil
+    ) -> WorkspaceNotification {
+        WorkspaceNotification(
+            id: UUID(),
+            workspaceID: workspaceID,
+            source: .system,
+            level: .warning,
+            message: "Notification",
+            routing: WorkspaceNotificationRouting(
+                panelID: panelID,
+                shouldShowInLeftRail: true,
+                shouldBadgePanel: shouldBadgePanel
+            ),
+            acknowledgedAt: acknowledgedAt
         )
     }
 }

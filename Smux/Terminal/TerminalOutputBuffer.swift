@@ -1,10 +1,11 @@
 import Foundation
 
 nonisolated struct TerminalOutputBuffer: Equatable {
-    static let defaultMaximumCharacterCount = 200_000
+    static let defaultMaximumCharacterCount = TerminalDisplayBuffer.defaultMaximumCharacterCount
 
     let maximumCharacterCount: Int
     private(set) var text: String
+    private var displayBuffer: TerminalDisplayBuffer
     private var pendingUTF8 = Data()
 
     init(
@@ -12,8 +13,13 @@ nonisolated struct TerminalOutputBuffer: Equatable {
         maximumCharacterCount: Int = TerminalOutputBuffer.defaultMaximumCharacterCount
     ) {
         self.maximumCharacterCount = max(0, maximumCharacterCount)
-        self.text = text
-        truncateIfNeeded()
+        self.text = ""
+        self.displayBuffer = TerminalDisplayBuffer(maximumCharacterCount: self.maximumCharacterCount)
+        append(text)
+    }
+
+    var displayText: String {
+        displayBuffer.text
     }
 
     mutating func append(_ output: String) {
@@ -22,6 +28,7 @@ nonisolated struct TerminalOutputBuffer: Equatable {
         }
 
         text.append(output)
+        displayBuffer.append(output)
         truncateIfNeeded()
     }
 
@@ -61,6 +68,7 @@ nonisolated struct TerminalOutputBuffer: Equatable {
 
     mutating func clear() {
         text.removeAll(keepingCapacity: true)
+        displayBuffer.clear()
         pendingUTF8.removeAll(keepingCapacity: true)
     }
 

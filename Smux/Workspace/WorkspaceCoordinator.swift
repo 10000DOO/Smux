@@ -6,6 +6,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var panelStore: PanelStore?
     var workspaceRepository: (any WorkspaceRepository)?
     var recentWorkspaceStore: RecentWorkspaceStore?
+    var gitBranchProvider: any GitBranchProviding
     var documentSessionStore: DocumentSessionStore?
     var terminalSessionController: TerminalSessionController?
     var previewSessionStore: PreviewSessionStore?
@@ -15,6 +16,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         panelStore: PanelStore? = nil,
         workspaceRepository: (any WorkspaceRepository)? = nil,
         recentWorkspaceStore: RecentWorkspaceStore? = nil,
+        gitBranchProvider: any GitBranchProviding = ProcessGitBranchProvider(),
         documentSessionStore: DocumentSessionStore? = nil,
         terminalSessionController: TerminalSessionController? = nil,
         previewSessionStore: PreviewSessionStore? = nil
@@ -23,6 +25,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         self.panelStore = panelStore
         self.workspaceRepository = workspaceRepository
         self.recentWorkspaceStore = recentWorkspaceStore
+        self.gitBranchProvider = gitBranchProvider
         self.documentSessionStore = documentSessionStore
         self.terminalSessionController = terminalSessionController
         self.previewSessionStore = previewSessionStore
@@ -63,12 +66,13 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         let existingWorkspace = workspaceStore.workspaces.first {
             $0.rootURL.standardizedFileURL == rootURL.standardizedFileURL
         }
+        let gitBranch = await currentGitBranch(for: rootURL)
         let workspace = Workspace.make(
             id: snapshot?.workspaceID ?? existingWorkspace?.id ?? Workspace.ID(),
             rootURL: rootURL,
             displayName: existingWorkspace?.displayName,
             securityBookmark: snapshot?.rootBookmark ?? existingWorkspace?.securityBookmark,
-            gitBranch: existingWorkspace?.gitBranch,
+            gitBranch: gitBranch,
             panelRootID: snapshot?.panelTree?.id ?? existingWorkspace?.panelRootID,
             openedAt: existingWorkspace?.openedAt ?? Date()
         )
@@ -178,6 +182,15 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentSessionStore?.replaceSessions(snapshot?.documents ?? [])
         previewSessionStore?.replaceStates(snapshot?.previews ?? [])
         terminalSessionController?.replaceSnapshotSessions(snapshot?.sessions ?? [])
+    }
+
+    private func currentGitBranch(for rootURL: URL) async -> String? {
+        switch await gitBranchProvider.currentBranch(for: rootURL) {
+        case let .branch(branch):
+            return branch
+        case .noBranch, .lookupFailed:
+            return nil
+        }
     }
 
     private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {

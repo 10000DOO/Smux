@@ -28,7 +28,9 @@ struct WorkspaceShellView: View {
                 onSelectFileTreeNode: selectFileTreeNode,
                 onSelectWorkspace: selectWorkspace,
                 onCloseWorkspace: closeWorkspace,
-                onOpenRecentWorkspace: openRecentWorkspace
+                onOpenRecentWorkspace: openRecentWorkspace,
+                onSelectNotification: activateNotification,
+                onAcknowledgeNotification: acknowledgeNotification
             )
 
             Divider()
@@ -41,6 +43,7 @@ struct WorkspaceShellView: View {
                 documentTextStore: documentTextStore,
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,
+                notifications: notificationStore.notifications,
                 onFocus: { panelStore.focus(panelID: $0) },
                 onReplaceSurface: { panelID, surface in
                     panelStore.replacePanel(panelID: panelID, with: surface)
@@ -124,6 +127,21 @@ private extension WorkspaceShellView {
                 workspaceStore.openErrorMessage = "Failed to open recent workspace: \(error.localizedDescription)"
             }
         }
+    }
+
+    func activateNotification(id notificationID: WorkspaceNotification.ID) {
+        guard let notification = notificationStore.notifications.first(where: { $0.id == notificationID }) else {
+            return
+        }
+
+        if let panelID = notification.routing.panelID {
+            panelStore.focus(panelID: panelID)
+        }
+        notificationStore.acknowledge(id: notificationID)
+    }
+
+    func acknowledgeNotification(id notificationID: WorkspaceNotification.ID) {
+        notificationStore.acknowledge(id: notificationID)
     }
 
     func expandFileTreeNode(_ nodeID: FileTreeNode.ID) {

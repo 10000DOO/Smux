@@ -20,14 +20,14 @@ final class TerminalOutputStore: ObservableObject {
         var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
         buffer.append(data)
         buffers[sessionID] = buffer
-        outputs[sessionID] = buffer.text
+        outputs[sessionID] = buffer.displayText
     }
 
     func append(_ text: String, for sessionID: TerminalSession.ID) {
         var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
         buffer.append(text)
         buffers[sessionID] = buffer
-        outputs[sessionID] = buffer.text
+        outputs[sessionID] = buffer.displayText
     }
 
     func clear(sessionID: TerminalSession.ID) {

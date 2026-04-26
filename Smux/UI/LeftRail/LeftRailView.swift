@@ -14,6 +14,8 @@ struct LeftRailView: View {
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
     var onCloseWorkspace: (Workspace.ID) -> Void = { _ in }
     var onOpenRecentWorkspace: (RecentWorkspace) -> Void = { _ in }
+    var onSelectNotification: (WorkspaceNotification.ID) -> Void = { _ in }
+    var onAcknowledgeNotification: (WorkspaceNotification.ID) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -196,20 +198,70 @@ private extension LeftRailView {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(visibleNotifications) { notification in
-                    Text(notification.message)
-                        .font(.caption)
-                        .lineLimit(2)
-                        .foregroundStyle(.secondary)
+                    notificationRow(notification)
                 }
             }
         }
     }
 
+    func notificationRow(_ notification: WorkspaceNotification) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Button {
+                onSelectNotification(notification.id)
+            } label: {
+                HStack(alignment: .top, spacing: 6) {
+                    Circle()
+                        .fill(notification.level.badgeColor)
+                        .frame(width: 6, height: 6)
+                        .padding(.top, 5)
+                    Text(notification.message)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                onAcknowledgeNotification(notification.id)
+            } label: {
+                Image(systemName: "checkmark")
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Acknowledge notification")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
     var visibleNotifications: [WorkspaceNotification] {
-        Array(notifications.filter(\.routing.shouldShowInLeftRail).prefix(3))
+        Array(
+            notifications
+                .filter { notification in
+                    notification.routing.shouldShowInLeftRail
+                        && (workspace == nil || notification.workspaceID == workspace?.id)
+                }
+                .prefix(3)
+        )
     }
 
     var panelSummaries: [PanelLeafSummary] {
         rootNode.leafSummaries(focusedPanelID: focusedPanelID)
+    }
+}
+
+private extension NotificationLevel {
+    var badgeColor: Color {
+        switch self {
+        case .info:
+            .blue
+        case .warning:
+            .yellow
+        case .error:
+            .red
+        case .critical:
+            .purple
+        }
     }
 }

@@ -8,6 +8,7 @@ struct SplitPanelView: View {
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
+    var notifications: [WorkspaceNotification] = []
     var onFocus: (PanelNode.ID) -> Void
     var onReplaceSurface: (PanelNode.ID, PanelSurfaceDescriptor) -> Void
     var onSplit: (PanelNode.ID, SplitDirection) -> Void
@@ -36,6 +37,7 @@ struct SplitPanelView: View {
                         documentTextStore: documentTextStore,
                         terminalSessionController: terminalSessionController,
                         terminalOutputStore: terminalOutputStore,
+                        notifications: notifications,
                         onFocus: onFocus,
                         onReplaceSurface: onReplaceSurface,
                         onSplit: onSplit,
@@ -54,6 +56,7 @@ struct SplitPanelView: View {
                         documentTextStore: documentTextStore,
                         terminalSessionController: terminalSessionController,
                         terminalOutputStore: terminalOutputStore,
+                        notifications: notifications,
                         onFocus: onFocus,
                         onReplaceSurface: onReplaceSurface,
                         onSplit: onSplit,
@@ -110,9 +113,47 @@ struct SplitPanelView: View {
                 .stroke(focusedPanelID == panelID ? Color.accentColor : Color.clear, lineWidth: 2)
                 .padding(4)
         }
+        .overlay(alignment: .topTrailing) {
+            PanelNotificationBadgeView(
+                count: PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
+                    for: panelID,
+                    notifications: notifications
+                )
+            )
+            .padding(8)
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             onFocus(panelID)
+        }
+    }
+}
+
+nonisolated struct PanelNotificationBadgeSummary: Equatable {
+    static func unacknowledgedBadgeCount(
+        for panelID: PanelNode.ID,
+        notifications: [WorkspaceNotification]
+    ) -> Int {
+        notifications.filter {
+            $0.routing.panelID == panelID
+                && $0.routing.shouldBadgePanel
+                && $0.acknowledgedAt == nil
+        }.count
+    }
+}
+
+private struct PanelNotificationBadgeView: View {
+    var count: Int
+
+    var body: some View {
+        if count > 0 {
+            Text(count > 9 ? "9+" : "\(count)")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(minWidth: 18, minHeight: 18)
+                .padding(.horizontal, count > 9 ? 4 : 0)
+                .background(Color.red, in: Capsule())
+                .accessibilityLabel("\(count) unacknowledged panel notifications")
         }
     }
 }

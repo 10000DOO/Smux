@@ -27,6 +27,15 @@ final class TerminalOutputStoreTests: XCTestCase {
         XCTAssertEqual(store.output(for: sessionID), "한")
     }
 
+    func testOutputUsesCleanDisplayText() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+
+        store.append("old\r\u{1B}[K\u{1B}[32mnew\u{1B}[0m", for: sessionID)
+
+        XCTAssertEqual(store.output(for: sessionID), "new")
+    }
+
     func testClearRemovesOnlyRequestedSessionOutput() {
         let firstSessionID = TerminalSession.ID()
         let secondSessionID = TerminalSession.ID()

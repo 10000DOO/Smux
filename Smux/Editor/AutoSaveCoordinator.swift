@@ -1,73 +1,183 @@
 import Foundation
 
+nonisolated enum AutoSaveState: String, Hashable, Sendable {
+    case idle
+    case scheduled
+    case saving
+    case saved
+    case dirty
+    case failed
+    case conflicted
+    case cancelled
+}
+
+nonisolated struct AutoSaveStatus: Hashable, Sendable {
+    var documentID: DocumentSession.ID
+    var state: AutoSaveState
+    var result: DocumentSaveResult?
+
+    var failure: DocumentSaveFailure? {
+        result?.failure
+    }
+
+    var conflict: DocumentConflict? {
+        result?.conflict
+    }
+
+    static func idle(documentID: DocumentSession.ID) -> AutoSaveStatus {
+        AutoSaveStatus(documentID: documentID, state: .idle, result: nil)
+    }
+
+    static func scheduled(documentID: DocumentSession.ID) -> AutoSaveStatus {
+        AutoSaveStatus(documentID: documentID, state: .scheduled, result: nil)
+    }
+
+    static func saving(documentID: DocumentSession.ID) -> AutoSaveStatus {
+        AutoSaveStatus(documentID: documentID, state: .saving, result: nil)
+    }
+
+    static func cancelled(documentID: DocumentSession.ID) -> AutoSaveStatus {
+        AutoSaveStatus(documentID: documentID, state: .cancelled, result: nil)
+    }
+
+    static func completed(
+        documentID: DocumentSession.ID,
+        result: DocumentSaveResult
+    ) -> AutoSaveStatus {
+        AutoSaveStatus(
+            documentID: documentID,
+            state: AutoSaveState(resultState: result.state),
+            result: result
+        )
+    }
+}
+
+extension AutoSaveState {
+    nonisolated init(resultState: DocumentSaveState) {
+        switch resultState {
+        case .clean:
+            self = .saved
+        case .dirty:
+            self = .dirty
+        case .saving:
+            self = .saving
+        case .failed:
+            self = .failed
+        case .conflicted:
+            self = .conflicted
+        }
+    }
+}
+
 @MainActor
 final class AutoSaveCoordinator {
-    typealias SaveAction = @MainActor @Sendable (DocumentSession.ID) async throws -> Void
+    typealias SaveAction = @MainActor @Sendable (DocumentSession.ID) async -> DocumentSaveResult
 
     private let debounceNanoseconds: UInt64
     private let saveAction: SaveAction
     private var scheduledTasks: [DocumentSession.ID: Task<Void, Never>] = [:]
     private var scheduleTokens: [DocumentSession.ID: UUID] = [:]
-    private(set) var lastErrors: [DocumentSession.ID: any Error] = [:]
+    private var savingDocumentIDs: Set<DocumentSession.ID> = []
+    private(set) var statuses: [DocumentSession.ID: AutoSaveStatus] = [:]
 
     init(
         debounceInterval: TimeInterval = 1,
-        saveAction: @escaping SaveAction = { _ in }
+        saveAction: @escaping SaveAction = { documentID in .saved(documentID: documentID) }
     ) {
         self.debounceNanoseconds = Self.nanoseconds(for: debounceInterval)
         self.saveAction = saveAction
     }
 
     func scheduleAutosave(for documentID: DocumentSession.ID) {
-        cancelAutosave(for: documentID)
+        cancelScheduledAutosave(for: documentID, markCancelled: false)
 
         let token = UUID()
         scheduleTokens[documentID] = token
+        statuses[documentID] = .scheduled(documentID: documentID)
 
         scheduledTasks[documentID] = Task { @MainActor in
             do {
                 try await Task.sleep(nanoseconds: debounceNanoseconds)
                 try Task.checkCancellation()
-                try await saveAction(documentID)
-                finishScheduledAutosave(documentID: documentID, token: token, error: nil)
-            } catch is CancellationError {
-                finishScheduledAutosave(documentID: documentID, token: token, error: nil)
+
+                guard scheduleTokens[documentID] == token else {
+                    return
+                }
+
+                scheduledTasks[documentID] = nil
+                scheduleTokens[documentID] = nil
+                await save(documentID: documentID)
             } catch {
-                finishScheduledAutosave(documentID: documentID, token: token, error: error)
+                finishCancelledAutosave(documentID: documentID, token: token)
             }
         }
     }
 
-    func cancelAutosave(for documentID: DocumentSession.ID) {
-        scheduledTasks[documentID]?.cancel()
+    @discardableResult
+    func cancelAutosave(for documentID: DocumentSession.ID) -> AutoSaveStatus {
+        cancelScheduledAutosave(for: documentID, markCancelled: true)
+    }
+
+    func status(for documentID: DocumentSession.ID) -> AutoSaveStatus {
+        statuses[documentID] ?? .idle(documentID: documentID)
+    }
+
+    @discardableResult
+    func save(documentID: DocumentSession.ID) async -> DocumentSaveResult {
+        cancelScheduledAutosave(for: documentID, markCancelled: false)
+
+        guard !savingDocumentIDs.contains(documentID) else {
+            let result = DocumentSaveResult.failed(
+                documentID: documentID,
+                failure: DocumentSaveFailure(documentEditorError: .saveAlreadyInProgress)
+            )
+            statuses[documentID] = .completed(documentID: documentID, result: result)
+
+            return result
+        }
+
+        savingDocumentIDs.insert(documentID)
+        statuses[documentID] = .saving(documentID: documentID)
+        let result = await saveAction(documentID)
+        savingDocumentIDs.remove(documentID)
+        statuses[documentID] = .completed(documentID: documentID, result: result)
+
+        return result
+    }
+
+    @discardableResult
+    func flush(documentID: DocumentSession.ID) async -> DocumentSaveResult {
+        await save(documentID: documentID)
+    }
+
+    @discardableResult
+    private func cancelScheduledAutosave(
+        for documentID: DocumentSession.ID,
+        markCancelled: Bool
+    ) -> AutoSaveStatus {
+        guard let scheduledTask = scheduledTasks[documentID] else {
+            return status(for: documentID)
+        }
+
+        scheduledTask.cancel()
         scheduledTasks[documentID] = nil
         scheduleTokens[documentID] = nil
-    }
 
-    func flush(documentID: DocumentSession.ID) async throws {
-        cancelAutosave(for: documentID)
-
-        do {
-            try await saveAction(documentID)
-            lastErrors[documentID] = nil
-        } catch {
-            lastErrors[documentID] = error
-            throw error
+        if markCancelled {
+            statuses[documentID] = .cancelled(documentID: documentID)
         }
+
+        return status(for: documentID)
     }
 
-    private func finishScheduledAutosave(
-        documentID: DocumentSession.ID,
-        token: UUID,
-        error: (any Error)?
-    ) {
+    private func finishCancelledAutosave(documentID: DocumentSession.ID, token: UUID) {
         guard scheduleTokens[documentID] == token else {
             return
         }
 
         scheduledTasks[documentID] = nil
         scheduleTokens[documentID] = nil
-        lastErrors[documentID] = error
+        statuses[documentID] = .cancelled(documentID: documentID)
     }
 
     private static func nanoseconds(for interval: TimeInterval) -> UInt64 {
