@@ -71,10 +71,13 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             ? bundledMermaidJavaScriptSource
             : nil
 
+        let hasMermaidBlocks = state?.mermaidBlocks.isEmpty == false
+
         return htmlDocument(
             body: bodyHTML(state: state, rendersMermaidInBrowser: mermaidJavaScript != nil),
             zoom: state?.zoom ?? 1,
-            mermaidJavaScript: mermaidJavaScript
+            mermaidJavaScript: mermaidJavaScript,
+            allowsMermaidInteraction: hasMermaidBlocks
         )
     }
 
@@ -140,8 +143,13 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             + (state.errors.isEmpty ? "" : "\n\(renderErrorsHTML(state.errors))")
     }
 
-    private static func htmlDocument(body: String, zoom: Double, mermaidJavaScript: String?) -> String {
-        let normalizedZoom = min(max(zoom.isFinite ? zoom : 1, 0.5), 3)
+    private static func htmlDocument(
+        body: String,
+        zoom: Double,
+        mermaidJavaScript: String?,
+        allowsMermaidInteraction: Bool
+    ) -> String {
+        let normalizedZoom = PreviewState.clampedZoom(zoom)
         let mermaidScripts = mermaidJavaScript.map { source in
             """
             <script>
@@ -179,6 +187,81 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             </script>
             """
         } ?? ""
+        let mermaidInteractionScripts = allowsMermaidInteraction ? """
+            <script>
+            (() => {
+                const minimumZoom = 0.5;
+                const maximumZoom = 3;
+                const zoomStep = 0.25;
+                const clampZoom = (value) => Math.min(maximumZoom, Math.max(minimumZoom, Number.isFinite(value) ? value : 1));
+
+                const setDiagramZoom = (block, zoom) => {
+                    const nextZoom = clampZoom(zoom);
+                    block.dataset.mermaidZoom = `${nextZoom}`;
+                    block.style.setProperty("--mermaid-diagram-zoom", nextZoom);
+                    const valueLabel = block.querySelector("[data-mermaid-zoom-value]");
+                    if (valueLabel) {
+                        valueLabel.textContent = `${Math.round(nextZoom * 100)}%`;
+                    }
+                };
+
+                document.querySelectorAll(".mermaid-block").forEach((block) => {
+                    setDiagramZoom(block, Number.parseFloat(block.dataset.mermaidZoom || "1"));
+
+                    block.querySelector("[data-mermaid-zoom-out]")?.addEventListener("click", () => {
+                        setDiagramZoom(block, Number.parseFloat(block.dataset.mermaidZoom || "1") - zoomStep);
+                    });
+
+                    block.querySelector("[data-mermaid-zoom-reset]")?.addEventListener("click", () => {
+                        setDiagramZoom(block, 1);
+                    });
+
+                    block.querySelector("[data-mermaid-zoom-in]")?.addEventListener("click", () => {
+                        setDiagramZoom(block, Number.parseFloat(block.dataset.mermaidZoom || "1") + zoomStep);
+                    });
+
+                    const panSurface = block.querySelector("[data-mermaid-pan-surface]");
+                    if (!panSurface) {
+                        return;
+                    }
+
+                    var isPanning = false;
+                    var startX = 0;
+                    var startY = 0;
+                    var startScrollLeft = 0;
+                    var startScrollTop = 0;
+
+                    panSurface.addEventListener("mousedown", (event) => {
+                        if (event.button !== 0 || event.target.closest("button, a")) {
+                            return;
+                        }
+
+                        isPanning = true;
+                        startX = event.clientX;
+                        startY = event.clientY;
+                        startScrollLeft = panSurface.scrollLeft;
+                        startScrollTop = panSurface.scrollTop;
+                        panSurface.classList.add("is-panning");
+                        event.preventDefault();
+                    });
+
+                    window.addEventListener("mousemove", (event) => {
+                        if (!isPanning) {
+                            return;
+                        }
+
+                        panSurface.scrollLeft = startScrollLeft - (event.clientX - startX);
+                        panSurface.scrollTop = startScrollTop - (event.clientY - startY);
+                    });
+
+                    window.addEventListener("mouseup", () => {
+                        isPanning = false;
+                        panSurface.classList.remove("is-panning");
+                    });
+                });
+            })();
+            </script>
+            """ : ""
 
         return """
         <!doctype html>
@@ -391,6 +474,49 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             font-weight: 600;
         }
 
+        .mermaid-title {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .mermaid-actions {
+            display: flex;
+            flex-shrink: 0;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mermaid-controls {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .mermaid-control {
+            min-width: 24px;
+            min-height: 22px;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: var(--surface);
+            color: var(--text);
+            font: inherit;
+            line-height: 1;
+        }
+
+        .mermaid-control:hover {
+            border-color: var(--accent);
+        }
+
+        .mermaid-zoom-value {
+            min-width: 38px;
+            color: var(--muted);
+            font-size: 12px;
+            font-variant-numeric: tabular-nums;
+            text-align: center;
+        }
+
         .mermaid-badge {
             border-radius: 999px;
             padding: 2px 8px;
@@ -406,6 +532,23 @@ nonisolated enum PreviewWebViewHTMLBuilder {
 
         .mermaid-artifact {
             padding: 14px;
+            overflow: auto;
+            cursor: grab;
+        }
+
+        .mermaid-artifact.is-panning {
+            cursor: grabbing;
+            user-select: none;
+        }
+
+        .mermaid-diagram-viewport {
+            display: inline-block;
+            min-width: 100%;
+            zoom: var(--mermaid-diagram-zoom, 1);
+        }
+
+        .mermaid-diagram-viewport svg {
+            max-width: none;
         }
 
         .mermaid-artifact pre {
@@ -421,6 +564,7 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         <body>
         \(body)
         \(mermaidScripts)
+        \(mermaidInteractionScripts)
         </body>
         </html>
         """
@@ -469,12 +613,22 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         return """
         <section class="mermaid-block mermaid-block--\(escapeAttribute(statusClass))" data-mermaid-block-id="\(escapeAttribute(block.id.uuidString))">
         <div class="mermaid-header">
-        <span>Mermaid diagram, lines \(block.sourceRange.startLine)-\(block.sourceRange.endLine)</span>
+        <span class="mermaid-title">Mermaid diagram, lines \(block.sourceRange.startLine)-\(block.sourceRange.endLine)</span>
+        <span class="mermaid-actions">
+        <span class="mermaid-controls" aria-label="Mermaid diagram controls">
+        <button type="button" class="mermaid-control" data-mermaid-zoom-out title="Zoom out diagram" aria-label="Zoom out diagram">-</button>
+        <span class="mermaid-zoom-value" data-mermaid-zoom-value>100%</span>
+        <button type="button" class="mermaid-control" data-mermaid-zoom-reset title="Reset diagram zoom" aria-label="Reset diagram zoom">1x</button>
+        <button type="button" class="mermaid-control" data-mermaid-zoom-in title="Zoom in diagram" aria-label="Zoom in diagram">+</button>
+        </span>
         <span class="mermaid-badge">\(status)</span>
+        </span>
         </div>
-        <div class="mermaid-artifact">
+        <div class="mermaid-artifact" data-mermaid-pan-surface>
+        <div class="mermaid-diagram-viewport">
         \(artifactHTML)
         \(errorHTML)
+        </div>
         </div>
         </section>
         """

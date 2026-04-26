@@ -33,7 +33,7 @@ nonisolated final class MarkdownPreviewPipeline {
             sanitizedMarkdown: stale ? nil : renderResult.sanitizedMarkdown,
             mermaidBlocks: stale ? [] : renderResult.mermaidBlocks,
             errors: errors,
-            zoom: 1,
+            zoom: PreviewState.defaultZoom,
             scrollAnchor: nil
         )
     }

@@ -2,6 +2,10 @@ import Foundation
 
 nonisolated struct PreviewState: Identifiable, Codable, Hashable {
     typealias ID = UUID
+    static let defaultZoom = 1.0
+    static let minimumZoom = 0.5
+    static let maximumZoom = 3.0
+    static let zoomStep = 0.1
 
     var id: ID
     var sourceDocumentID: DocumentSession.ID
@@ -11,6 +15,10 @@ nonisolated struct PreviewState: Identifiable, Codable, Hashable {
     var errors: [PreviewRenderError]
     var zoom: Double
     var scrollAnchor: String?
+
+    static func clampedZoom(_ zoom: Double) -> Double {
+        min(max(zoom.isFinite ? zoom : defaultZoom, minimumZoom), maximumZoom)
+    }
 }
 
 nonisolated struct SanitizedMarkdown: Codable, Hashable {

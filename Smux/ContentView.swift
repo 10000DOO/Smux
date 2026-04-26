@@ -190,8 +190,37 @@ final class PreviewSessionStore: ObservableObject {
     func upsertState(_ state: PreviewState, for previewID: PreviewState.ID) {
         var storedState = state
         storedState.id = previewID
+        storedState.zoom = PreviewState.clampedZoom(states[previewID]?.zoom ?? state.zoom)
         states[previewID] = storedState
         sourceDocumentIDs[previewID] = storedState.sourceDocumentID
+    }
+
+    func updateZoom(for previewID: PreviewState.ID, to zoom: Double) {
+        let clampedZoom = PreviewState.clampedZoom(zoom)
+
+        if var state = states[previewID] {
+            state.zoom = clampedZoom
+            states[previewID] = state
+            return
+        }
+
+        guard let sourceDocumentID = sourceDocumentIDs[previewID] else {
+            return
+        }
+
+        upsertState(
+            PreviewState(
+                id: previewID,
+                sourceDocumentID: sourceDocumentID,
+                renderVersion: 0,
+                sanitizedMarkdown: nil,
+                mermaidBlocks: [],
+                errors: [],
+                zoom: clampedZoom,
+                scrollAnchor: nil
+            ),
+            for: previewID
+        )
     }
 
     func upsertErrorState(
@@ -214,7 +243,7 @@ final class PreviewSessionStore: ObservableObject {
                         sourceRange: nil
                     )
                 ],
-                zoom: 1,
+                zoom: PreviewState.defaultZoom,
                 scrollAnchor: nil
             ),
             for: previewID
@@ -226,8 +255,14 @@ final class PreviewSessionStore: ObservableObject {
     }
 
     func replaceStates(_ restoredStates: [PreviewState]) {
-        states = Dictionary(uniqueKeysWithValues: restoredStates.map { ($0.id, $0) })
-        sourceDocumentIDs = Dictionary(uniqueKeysWithValues: restoredStates.map { ($0.id, $0.sourceDocumentID) })
+        let normalizedStates = restoredStates.map { state in
+            var normalizedState = state
+            normalizedState.zoom = PreviewState.clampedZoom(state.zoom)
+            return normalizedState
+        }
+
+        states = Dictionary(uniqueKeysWithValues: normalizedStates.map { ($0.id, $0) })
+        sourceDocumentIDs = Dictionary(uniqueKeysWithValues: normalizedStates.map { ($0.id, $0.sourceDocumentID) })
     }
 
     func snapshotStates() -> [PreviewState] {
@@ -241,7 +276,7 @@ final class PreviewSessionStore: ObservableObject {
                 sanitizedMarkdown: nil,
                 mermaidBlocks: [],
                 errors: [],
-                zoom: 1,
+                zoom: PreviewState.defaultZoom,
                 scrollAnchor: nil
             )
         }

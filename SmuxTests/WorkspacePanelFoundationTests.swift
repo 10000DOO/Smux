@@ -892,6 +892,60 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testPreviewSessionStorePreservesZoomAcrossRenderUpdates() {
+        let store = PreviewSessionStore()
+        let previewID = PreviewState.ID()
+        let documentID = DocumentSession.ID()
+        let firstState = PreviewState(
+            id: previewID,
+            sourceDocumentID: documentID,
+            renderVersion: 1,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<p>First</p>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: 1.6,
+            scrollAnchor: nil
+        )
+        let nextRenderState = PreviewState(
+            id: PreviewState.ID(),
+            sourceDocumentID: documentID,
+            renderVersion: 2,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<p>Second</p>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: PreviewState.defaultZoom,
+            scrollAnchor: nil
+        )
+
+        store.upsertState(firstState, for: previewID)
+        store.upsertState(nextRenderState, for: previewID)
+
+        XCTAssertEqual(store.state(for: previewID)?.id, previewID)
+        XCTAssertEqual(store.state(for: previewID)?.renderVersion, 2)
+        XCTAssertEqual(store.state(for: previewID)?.sanitizedMarkdown, SanitizedMarkdown(html: "<p>Second</p>"))
+        XCTAssertEqual(store.state(for: previewID)?.zoom, 1.6)
+    }
+
+    @MainActor
+    func testPreviewSessionStoreClampsZoomUpdatesAndSnapshotsBoundPreview() {
+        let store = PreviewSessionStore()
+        let previewID = PreviewState.ID()
+        let documentID = DocumentSession.ID()
+
+        store.bind(previewID: previewID, sourceDocumentID: documentID)
+        store.updateZoom(for: previewID, to: 12)
+
+        let state = store.state(for: previewID)
+        XCTAssertEqual(state?.sourceDocumentID, documentID)
+        XCTAssertEqual(state?.zoom, PreviewState.maximumZoom)
+        XCTAssertEqual(store.snapshotStates(), state.map { [$0] } ?? [])
+
+        store.updateZoom(for: previewID, to: 0.1)
+
+        XCTAssertEqual(store.state(for: previewID)?.zoom, PreviewState.minimumZoom)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorCreateTerminalStartsControllerSessionAndUsesReturnedID() async throws {
         let workspace = Workspace.make(
             id: UUID(),

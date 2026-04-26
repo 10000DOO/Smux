@@ -691,7 +691,14 @@ private struct PreviewPanelSurfaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PreviewPanelHeader(session: sourceSession, errorMessage: errorMessage)
+            PreviewPanelHeader(
+                session: sourceSession,
+                zoom: previewSessionStore.state(for: previewID)?.zoom ?? PreviewState.defaultZoom,
+                errorMessage: errorMessage,
+                onZoomOut: { updateZoom(by: -PreviewState.zoomStep) },
+                onResetZoom: { previewSessionStore.updateZoom(for: previewID, to: PreviewState.defaultZoom) },
+                onZoomIn: { updateZoom(by: PreviewState.zoomStep) }
+            )
             PreviewWebViewRepresentable(state: previewSessionStore.state(for: previewID))
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -768,11 +775,20 @@ private struct PreviewPanelSurfaceView: View {
         let loadedDocument = try await fileIO.loadText(from: session.url)
         return DocumentTextSnapshot(text: loadedDocument.text, version: session.textVersion)
     }
+
+    private func updateZoom(by delta: Double) {
+        let currentZoom = previewSessionStore.state(for: previewID)?.zoom ?? PreviewState.defaultZoom
+        previewSessionStore.updateZoom(for: previewID, to: currentZoom + delta)
+    }
 }
 
 private struct PreviewPanelHeader: View {
     var session: DocumentSession?
+    var zoom: Double
     var errorMessage: String?
+    var onZoomOut: () -> Void
+    var onResetZoom: () -> Void
+    var onZoomIn: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -784,10 +800,53 @@ private struct PreviewPanelHeader: View {
                 Text("Unavailable")
                     .foregroundStyle(.secondary)
             }
+            previewZoomControls
         }
         .font(.caption)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var previewZoomControls: some View {
+        HStack(spacing: 6) {
+            Button(action: onZoomOut) {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .disabled(normalizedZoom <= PreviewState.minimumZoom)
+            .help("Zoom out preview")
+            .accessibilityLabel("Zoom out preview")
+
+            Button(action: onResetZoom) {
+                Text(zoomPercentage)
+                    .monospacedDigit()
+                    .frame(minWidth: 38)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isDefaultZoom)
+            .help("Reset preview zoom")
+            .accessibilityLabel("Reset preview zoom")
+
+            Button(action: onZoomIn) {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .disabled(normalizedZoom >= PreviewState.maximumZoom)
+            .help("Zoom in preview")
+            .accessibilityLabel("Zoom in preview")
+        }
+    }
+
+    private var normalizedZoom: Double {
+        PreviewState.clampedZoom(zoom)
+    }
+
+    private var zoomPercentage: String {
+        "\(Int((normalizedZoom * 100).rounded()))%"
+    }
+
+    private var isDefaultZoom: Bool {
+        abs(normalizedZoom - PreviewState.defaultZoom) < 0.0001
     }
 }

@@ -10,6 +10,7 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertTrue(html.contains("Content-Security-Policy"))
         XCTAssertTrue(html.contains("default-src 'none'"))
         XCTAssertTrue(html.contains("No preview available"))
+        XCTAssertFalse(html.contains("data-mermaid-pan-surface"))
     }
 
     func testShowsUnavailableStateAndEscapesRenderErrorsWhenMarkdownIsMissing() {
@@ -142,6 +143,46 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertFalse(html.contains("<script src="))
         XCTAssertFalse(html.contains("cdn.jsdelivr"))
         XCTAssertFalse(html.contains("unpkg.com"))
+    }
+
+    func testClampsPreviewZoomInGeneratedHTML() {
+        let overZoomed = PreviewWebViewHTMLBuilder.makeHTML(
+            state: makeState(sanitizedMarkdown: SanitizedMarkdown(html: "<p>Body</p>"), zoom: 8)
+        )
+        let underZoomed = PreviewWebViewHTMLBuilder.makeHTML(
+            state: makeState(sanitizedMarkdown: SanitizedMarkdown(html: "<p>Body</p>"), zoom: 0.1)
+        )
+
+        XCTAssertTrue(overZoomed.contains("--preview-zoom: 3.0;"))
+        XCTAssertTrue(underZoomed.contains("--preview-zoom: 0.5;"))
+    }
+
+    func testAddsMermaidDiagramZoomControlsAndPanSurface() {
+        let blockID = UUID(uuidString: "00000000-0000-0000-0000-000000000024")!
+        let placeholder = """
+        <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(blockID.uuidString)" data-source-start-line="2" data-source-end-line="4"></div>
+        """
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1>Diagram</h1>\n\(placeholder)"),
+            mermaidBlocks: [
+                makeMermaidBlock(
+                    id: blockID,
+                    startLine: 2,
+                    endLine: 4,
+                    source: "flowchart LR\nA --> B"
+                )
+            ]
+        )
+
+        let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
+
+        XCTAssertTrue(html.contains("class=\"mermaid-controls\""))
+        XCTAssertTrue(html.contains("data-mermaid-zoom-out"))
+        XCTAssertTrue(html.contains("data-mermaid-zoom-reset"))
+        XCTAssertTrue(html.contains("data-mermaid-zoom-in"))
+        XCTAssertTrue(html.contains("data-mermaid-pan-surface"))
+        XCTAssertTrue(html.contains("--mermaid-diagram-zoom"))
+        XCTAssertTrue(html.contains("scrollLeft = startScrollLeft"))
     }
 
     @MainActor
@@ -299,7 +340,8 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
     private func makeState(
         sanitizedMarkdown: SanitizedMarkdown?,
         mermaidBlocks: [MermaidBlockState] = [],
-        errors: [PreviewRenderError] = []
+        errors: [PreviewRenderError] = [],
+        zoom: Double = PreviewState.defaultZoom
     ) -> PreviewState {
         PreviewState(
             id: PreviewState.ID(),
@@ -308,7 +350,7 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
             sanitizedMarkdown: sanitizedMarkdown,
             mermaidBlocks: mermaidBlocks,
             errors: errors,
-            zoom: 1,
+            zoom: zoom,
             scrollAnchor: nil
         )
     }
