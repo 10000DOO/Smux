@@ -55,7 +55,6 @@ private extension AgentStatus {
     func hasSameTransitionIdentity(as other: AgentStatus) -> Bool {
         agentKind == other.agentKind
             && state == other.state
-            && source == other.source
             && message == other.message
     }
 }

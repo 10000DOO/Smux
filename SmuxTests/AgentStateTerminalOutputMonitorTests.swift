@@ -89,4 +89,71 @@ final class AgentStateTerminalOutputMonitorTests: XCTestCase {
         XCTAssertEqual(notificationStore.notifications.first?.level, .info)
         XCTAssertNil(notificationStore.notifications.first?.routing.panelID)
     }
+
+    @MainActor
+    func testHookPayloadCreatesNotification() {
+        let notificationStore = NotificationStore()
+        let monitor = AgentTerminalOutputMonitor(
+            stateStore: AgentStateStore(),
+            notificationStore: notificationStore
+        )
+        let sessionID = TerminalSession.ID()
+        let workspaceID = Workspace.ID()
+        let panelID = PanelNode.ID()
+
+        let notification = monitor.ingest(
+            hookPayload: AgentHookPayload(
+                agentKind: .claude,
+                eventName: "Notification",
+                body: "Please respond before continuing."
+            ),
+            sessionID: sessionID,
+            workspaceID: workspaceID,
+            panelID: panelID
+        )
+
+        XCTAssertEqual(notification?.workspaceID, workspaceID)
+        XCTAssertEqual(notification?.panelID, panelID)
+        XCTAssertEqual(notification?.sessionID, sessionID)
+        XCTAssertEqual(notification?.kind, .waitingForInput)
+        XCTAssertEqual(notification?.level, .warning)
+        XCTAssertEqual(notification?.message, "Please respond before continuing.")
+        XCTAssertEqual(notificationStore.notifications.first?.agentKind, .waitingForInput)
+        XCTAssertEqual(notificationStore.notifications.first?.routing.panelID, panelID)
+    }
+
+    @MainActor
+    func testHookPayloadDuplicateOfTerminalOutputDoesNotCreateDuplicateNotification() {
+        let stateStore = AgentStateStore()
+        let notificationStore = NotificationStore()
+        let monitor = AgentTerminalOutputMonitor(
+            stateStore: stateStore,
+            notificationStore: notificationStore
+        )
+        let sessionID = TerminalSession.ID()
+        let workspaceID = Workspace.ID()
+        let panelID = PanelNode.ID()
+
+        let terminalNotification = monitor.ingest(
+            output: "Codex\nDo you want to allow this command?",
+            sessionID: sessionID,
+            workspaceID: workspaceID,
+            panelID: panelID
+        )
+        let hookNotification = monitor.ingest(
+            hookPayload: AgentHookPayload(
+                agentKind: .codex,
+                eventName: "PermissionRequest",
+                body: "Do you want to allow this command?"
+            ),
+            sessionID: sessionID,
+            workspaceID: workspaceID,
+            panelID: panelID
+        )
+
+        XCTAssertNotNil(terminalNotification)
+        XCTAssertNil(hookNotification)
+        XCTAssertEqual(stateStore.transitions.count, 1)
+        XCTAssertEqual(notificationStore.notifications.count, 1)
+    }
 }

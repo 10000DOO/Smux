@@ -51,6 +51,84 @@ final class AgentStateCoreTests: XCTestCase {
         XCTAssertNil(detector.detectStatus(from: "Do you want to allow network access?", sessionID: TerminalSession.ID()))
     }
 
+    func testDetectorMapsHookPayloadToPermissionRequest() {
+        let detector = AgentStatusDetector()
+        let sessionID = TerminalSession.ID()
+        let occurredAt = Date(timeIntervalSince1970: 100)
+
+        let status = detector.detectStatus(
+            from: AgentHookPayload(
+                agentKind: .codex,
+                eventName: "PermissionRequest",
+                body: "Approve command execution?",
+                occurredAt: occurredAt
+            ),
+            sessionID: sessionID
+        )
+
+        XCTAssertEqual(status?.agentKind, .codex)
+        XCTAssertEqual(status?.state, .permissionRequested)
+        XCTAssertEqual(status?.source, .hookPayload)
+        XCTAssertEqual(status?.message, "Approve command execution?")
+        XCTAssertEqual(status?.updatedAt, occurredAt)
+        XCTAssertGreaterThanOrEqual(status?.confidence ?? 0, 0.9)
+    }
+
+    func testDetectorMapsClaudeNotificationHookToWaitingForInput() {
+        let detector = AgentStatusDetector()
+
+        let status = detector.detectStatus(
+            from: AgentHookPayload(
+                agentKind: .claude,
+                eventName: "Notification",
+                title: "Claude needs input",
+                body: "Please respond before continuing."
+            ),
+            sessionID: TerminalSession.ID()
+        )
+
+        XCTAssertEqual(status?.agentKind, .claude)
+        XCTAssertEqual(status?.state, .waitingForInput)
+        XCTAssertEqual(status?.source, .hookPayload)
+        XCTAssertEqual(status?.message, "Please respond before continuing.")
+    }
+
+    func testDetectorMapsHookStopToCompleted() {
+        let detector = AgentStatusDetector()
+
+        let status = detector.detectStatus(
+            from: AgentHookPayload(
+                agentKind: .codex,
+                eventName: "Stop",
+                message: "Codex completed successfully"
+            ),
+            sessionID: TerminalSession.ID()
+        )
+
+        XCTAssertEqual(status?.agentKind, .codex)
+        XCTAssertEqual(status?.state, .completed)
+        XCTAssertEqual(status?.source, .hookPayload)
+        XCTAssertEqual(status?.message, "Codex completed successfully")
+    }
+
+    func testDetectorMapsNotificationPermissionDeniedToFailed() {
+        let detector = AgentStatusDetector()
+
+        let status = detector.detectStatus(
+            from: AgentHookPayload(
+                agentKind: .claude,
+                eventName: "Notification",
+                body: "Permission denied by user."
+            ),
+            sessionID: TerminalSession.ID()
+        )
+
+        XCTAssertEqual(status?.agentKind, .claude)
+        XCTAssertEqual(status?.state, .failed)
+        XCTAssertEqual(status?.source, .hookPayload)
+        XCTAssertEqual(status?.message, "Permission denied by user.")
+    }
+
     @MainActor
     func testAgentStateStoreSuppressesDuplicateTransitionsButUpdatesCurrentStatus() {
         let store = AgentStateStore()
@@ -71,6 +149,32 @@ final class AgentStateCoreTests: XCTestCase {
         XCTAssertNotNil(completedTransition)
         XCTAssertEqual(completedTransition?.previousStatus?.id, duplicate.id)
         XCTAssertEqual(store.transitions.map(\.currentStatus.id), [first.id, completed.id])
+    }
+
+    @MainActor
+    func testAgentStateStoreSuppressesDuplicateTransitionsAcrossSources() {
+        let store = AgentStateStore()
+        let sessionID = TerminalSession.ID()
+        let terminalStatus = agentStatus(
+            state: .permissionRequested,
+            source: .terminalOutput,
+            message: "Approve command?",
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let hookStatus = agentStatus(
+            state: .permissionRequested,
+            source: .hookPayload,
+            message: "Approve command?",
+            updatedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let firstTransition = store.ingest(terminalStatus, sessionID: sessionID)
+        let duplicateTransition = store.ingest(hookStatus, sessionID: sessionID)
+
+        XCTAssertNotNil(firstTransition)
+        XCTAssertNil(duplicateTransition)
+        XCTAssertEqual(store.status(for: sessionID)?.id, hookStatus.id)
+        XCTAssertEqual(store.transitions.map(\.currentStatus.id), [terminalStatus.id])
     }
 
     private func agentStatus(
