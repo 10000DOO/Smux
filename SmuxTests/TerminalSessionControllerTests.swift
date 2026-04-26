@@ -159,6 +159,23 @@ final class TerminalSessionControllerTests: XCTestCase {
         XCTAssertTrue(client.writes.isEmpty)
     }
 
+    func testRemoveSessionTerminatesClientAndDropsStoredSession() async throws {
+        let client = MockPTYClient(processID: 505)
+        let controller = TerminalSessionController(
+            ptyFactory: MockPTYClientFactory(client: client)
+        )
+        let workspace = makeWorkspace(path: "/tmp/SmuxTerminalRemove")
+        let session = try await controller.createSession(in: workspace, command: ["cat"])
+
+        controller.removeSession(sessionID: session.id)
+        client.exit(code: 0)
+        await Task.yield()
+
+        XCTAssertEqual(client.terminateCallCount, 1)
+        XCTAssertNil(controller.session(for: session.id))
+        XCTAssertNil(controller.sessions[session.id])
+    }
+
     func testLocalPTYClientWriteRetriesEINTRAndCompletesPartialWrites() throws {
         var callCount = 0
         var chunks: [Data] = []

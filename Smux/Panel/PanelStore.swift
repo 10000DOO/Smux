@@ -28,8 +28,12 @@ final class PanelStore: ObservableObject, PanelCommanding {
         splitFocusedPanel(direction: splitDirection, surface: surface)
     }
 
+    var canCloseFocusedPanel: Bool {
+        rootNode.leafIDs.count >= 2 || (focusedSurface.map { $0 != .empty } ?? false)
+    }
+
     var focusedSurface: PanelSurfaceDescriptor? {
-        rootNode.surface(forLeaf: focusedPanelID)
+        rootNode.surface(forLeaf: focusedCommandPanelID)
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
@@ -54,6 +58,14 @@ final class PanelStore: ObservableObject, PanelCommanding {
 
     func focusPreviousPanel() {
         focusPanel(offset: -1, fallbackToLast: true)
+    }
+
+    func closeFocusedPanel() {
+        guard let targetPanelID = focusedCommandPanelID else {
+            return
+        }
+
+        closePanel(panelID: targetPanelID)
     }
 
     func splitPanel(
@@ -82,6 +94,25 @@ final class PanelStore: ObservableObject, PanelCommanding {
         focusedPanelID = panelID
     }
 
+    func closePanel(panelID: PanelNode.ID) {
+        guard rootNode.containsLeaf(panelID: panelID) else {
+            return
+        }
+
+        if rootNode.isLeaf {
+            rootNode = .leaf(surface: .empty)
+            focusedPanelID = rootNode.id
+            return
+        }
+
+        guard let result = rootNode.removingLeaf(panelID: panelID) else {
+            return
+        }
+
+        rootNode = result.node
+        focusedPanelID = result.focusCandidateID ?? rootNode.firstLeafID
+    }
+
     func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {
         guard let updatedRootNode = rootNode.updatingSplitRatio(
             splitID: splitID,
@@ -96,6 +127,14 @@ final class PanelStore: ObservableObject, PanelCommanding {
     func reset(to rootNode: PanelNode = .placeholder) {
         self.rootNode = rootNode
         focusedPanelID = rootNode.firstLeafID
+    }
+
+    private var focusedCommandPanelID: PanelNode.ID? {
+        if let focusedPanelID, rootNode.containsLeaf(panelID: focusedPanelID) {
+            return focusedPanelID
+        }
+
+        return rootNode.firstLeafID
     }
 
     private func focusPanel(offset: Int, fallbackToLast: Bool) {

@@ -100,6 +100,14 @@ extension PanelNode {
         return children.lazy.compactMap(\.firstLeafID).first
     }
 
+    var lastLeafID: ID? {
+        if isLeaf {
+            return id
+        }
+
+        return children.reversed().lazy.compactMap(\.lastLeafID).first
+    }
+
     var leafIDs: [ID] {
         if isLeaf {
             return [id]
@@ -196,6 +204,30 @@ extension PanelNode {
         return nil
     }
 
+    func removingLeaf(panelID: ID) -> (node: PanelNode, focusCandidateID: ID?)? {
+        guard isSplit, children.count == 2 else {
+            return nil
+        }
+
+        if children[0].containsLeaf(panelID: panelID) {
+            return removingLeaf(
+                panelID: panelID,
+                removedChildIndex: 0,
+                siblingIndex: 1
+            )
+        }
+
+        if children[1].containsLeaf(panelID: panelID) {
+            return removingLeaf(
+                panelID: panelID,
+                removedChildIndex: 1,
+                siblingIndex: 0
+            )
+        }
+
+        return nil
+    }
+
     func splittingLeaf(
         panelID: ID,
         direction: SplitDirection,
@@ -241,5 +273,39 @@ extension PanelNode {
         }
 
         return nil
+    }
+
+    private func removingLeaf(
+        panelID: ID,
+        removedChildIndex: Int,
+        siblingIndex: Int
+    ) -> (node: PanelNode, focusCandidateID: ID?)? {
+        let child = children[removedChildIndex]
+        let sibling = children[siblingIndex]
+
+        if child.isLeaf, child.id == panelID {
+            let focusCandidateID = siblingIndex < removedChildIndex
+                ? sibling.lastLeafID
+                : sibling.firstLeafID
+            return (sibling, focusCandidateID)
+        }
+
+        guard let removal = child.removingLeaf(panelID: panelID) else {
+            return nil
+        }
+
+        var updatedChildren = children
+        updatedChildren[removedChildIndex] = removal.node
+
+        return (
+            PanelNode(
+                id: id,
+                kind: .split,
+                direction: direction,
+                ratio: ratio,
+                children: updatedChildren
+            ),
+            removal.focusCandidateID
+        )
     }
 }

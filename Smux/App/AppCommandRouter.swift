@@ -106,6 +106,10 @@ struct AppCommandRouter {
     func focusPreviousPanel() {
         panelCommanding?.focusPreviousPanel()
     }
+
+    func closeFocusedPanel() {
+        panelCommanding?.closeFocusedPanel()
+    }
 }
 
 enum AppCommandRouterError: Error, Equatable {

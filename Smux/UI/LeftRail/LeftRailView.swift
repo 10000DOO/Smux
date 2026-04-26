@@ -247,16 +247,21 @@ private extension LeftRailView {
             .padding(.horizontal, 9)
             .foregroundStyle(panelTab.isFocused ? Color.white : Color.primary)
             .background {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(panelTab.isFocused ? Color.accentColor : Color(nsColor: .controlBackgroundColor))
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(
-                        panelTab.isFocused ? Color.clear : Color(nsColor: .separatorColor).opacity(0.45),
+                        panelTab.isFocused ? Color.white.opacity(0.18) : Color(nsColor: .separatorColor).opacity(0.35),
                         lineWidth: 1
                     )
             }
+            .shadow(
+                color: panelTab.isFocused ? Color.accentColor.opacity(0.16) : Color.clear,
+                radius: 5,
+                y: 1
+            )
         }
         .buttonStyle(.plain)
         .accessibilityLabel(panelTab.title)

@@ -75,6 +75,7 @@ struct WorkspaceShellView: View {
                 commandRouter: commandRouter,
                 activeWorkspaceID: workspaceStore.activeWorkspace?.id,
                 focusedPanelID: panelStore.focusedPanelID,
+                canCloseFocusedPanel: panelStore.canCloseFocusedPanel,
                 selectedDocumentURL: fileTreeStore.selectedDocumentCandidateURL,
                 latestNotificationID: (workspaceStore.activeWorkspace?.id).flatMap { workspaceID in
                     notificationStore.mostRecentVisibleNotificationID(workspaceID: workspaceID)
@@ -112,6 +113,7 @@ private struct WorkspaceCommandShortcutLayer: View {
     var commandRouter: AppCommandRouter
     var activeWorkspaceID: Workspace.ID?
     var focusedPanelID: PanelNode.ID?
+    var canCloseFocusedPanel: Bool
     var selectedDocumentURL: URL?
     var latestNotificationID: WorkspaceNotification.ID?
     var onActivateNotification: (WorkspaceNotification.ID) -> Void
@@ -143,6 +145,18 @@ private struct WorkspaceCommandShortcutLayer: View {
                 commandRouter.createPanel(splitDirection: .horizontal, surface: .empty)
             }
             .keyboardShortcut("t", modifiers: [.command])
+
+            shortcutButton("New Panel Below") {
+                commandRouter.createPanel(splitDirection: .vertical, surface: .empty)
+            }
+            .keyboardShortcut("d", modifiers: [.command])
+
+            if canCloseFocusedPanel {
+                shortcutButton("Close Current Panel") {
+                    commandRouter.closeFocusedPanel()
+                }
+                .keyboardShortcut("w", modifiers: [.command])
+            }
 
             shortcutButton("Create Terminal") {
                 createTerminal()

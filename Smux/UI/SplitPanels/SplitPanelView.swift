@@ -206,8 +206,18 @@ struct SplitPanelView: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 6)
-                .stroke(focusedPanelID == panelID ? Color.accentColor : Color.clear, lineWidth: 2)
+                .fill(focusedPanelID == panelID ? Color.accentColor.opacity(0.035) : Color.clear)
                 .padding(4)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(
+                    focusedPanelID == panelID ? Color(nsColor: .separatorColor).opacity(0.28) : Color.clear,
+                    lineWidth: 1
+                )
+                .padding(4)
+                .allowsHitTesting(false)
         }
         .overlay(alignment: .topTrailing) {
             PanelNotificationBadgeView(
@@ -218,6 +228,10 @@ struct SplitPanelView: View {
             )
             .padding(8)
         }
+        .shadow(
+            color: focusedPanelID == panelID ? Color.accentColor.opacity(0.08) : Color.clear,
+            radius: 6
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             onFocus(panelID)
@@ -698,12 +712,26 @@ private struct DocumentEditorPanelHeader: View {
                     .foregroundStyle(.secondary)
             }
             Button(action: onSave) {
-                Label("Save", systemImage: "square.and.arrow.down")
-                    .labelStyle(.iconOnly)
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 28, height: 24)
+                    .foregroundStyle(canSave ? Color.accentColor : Color.secondary)
+                    .background(
+                        canSave
+                            ? Color.accentColor.opacity(0.12)
+                            : Color(nsColor: .controlBackgroundColor).opacity(0.55),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor.opacity(canSave ? 0.18 : 0), lineWidth: 1)
+                    }
             }
-            .buttonStyle(.borderless)
-            .disabled(!isFocused || session == nil)
+            .buttonStyle(.plain)
+            .disabled(!canSave)
             .keyboardShortcut("s", modifiers: [.command])
+            .help("Save file")
+            .accessibilityLabel("Save file")
         }
         .font(.caption)
         .padding(.horizontal, 10)
@@ -745,6 +773,10 @@ private struct DocumentEditorPanelHeader: View {
         case .clean, nil:
             return nil
         }
+    }
+
+    private var canSave: Bool {
+        isFocused && session != nil
     }
 }
 

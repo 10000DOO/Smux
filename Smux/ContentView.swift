@@ -262,6 +262,11 @@ final class PreviewSessionStore: ObservableObject {
         states.removeValue(forKey: previewID)
     }
 
+    func removePreview(previewID: PreviewState.ID) {
+        states.removeValue(forKey: previewID)
+        sourceDocumentIDs.removeValue(forKey: previewID)
+    }
+
     func replaceStates(_ restoredStates: [PreviewState]) {
         let normalizedStates = restoredStates.map { state in
             var normalizedState = state

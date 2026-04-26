@@ -24,8 +24,15 @@ struct PanelSurfacePlaceholderView: View {
         .background(Color(nsColor: .textBackgroundColor))
         .overlay {
             RoundedRectangle(cornerRadius: 6)
-                .stroke(isFocused ? Color.accentColor : Color.clear, lineWidth: 2)
+                .fill(isFocused ? Color.accentColor.opacity(0.035) : Color.clear)
                 .padding(4)
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(isFocused ? Color(nsColor: .separatorColor).opacity(0.28) : Color.clear, lineWidth: 1)
+                .padding(4)
+                .allowsHitTesting(false)
         }
         .accessibilityLabel(presentation.accessibilityLabel)
     }

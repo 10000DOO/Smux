@@ -148,6 +148,11 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         sessions[sessionID] = session
     }
 
+    func removeSession(sessionID: TerminalSession.ID) {
+        ptyClients.removeValue(forKey: sessionID)?.terminate()
+        sessions.removeValue(forKey: sessionID)
+    }
+
     func replaceSnapshotSessions(_ restoredSessions: [TerminalSession]) {
         ptyClients.values.forEach { $0.terminate() }
         ptyClients.removeAll()

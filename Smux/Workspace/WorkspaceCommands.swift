@@ -57,6 +57,7 @@ protocol PanelCommanding {
     func updateSplitRatio(splitID: PanelNode.ID, ratio: Double)
     func focusNextPanel()
     func focusPreviousPanel()
+    func closeFocusedPanel()
 }
 
 extension WorkspaceCoordinator {
@@ -82,5 +83,33 @@ extension WorkspaceCoordinator {
 
     func focusPreviousPanel() {
         panelStore?.focusPreviousPanel()
+    }
+
+    func closeFocusedPanel() {
+        guard let panelStore, panelStore.canCloseFocusedPanel else {
+            return
+        }
+
+        let surface = panelStore.focusedSurface
+        panelStore.closeFocusedPanel()
+        cleanupClosedPanelSurface(surface)
+    }
+
+    private func cleanupClosedPanelSurface(_ surface: PanelSurfaceDescriptor?) {
+        guard let surface else {
+            return
+        }
+
+        switch surface {
+        case .terminal(let sessionID):
+            terminalSessionController?.removeSession(sessionID: sessionID)
+        case .preview(let previewID):
+            previewSessionStore?.removePreview(previewID: previewID)
+        case .editor:
+            // Document sessions can be shared by editor and preview surfaces.
+            break
+        case .empty:
+            break
+        }
     }
 }
