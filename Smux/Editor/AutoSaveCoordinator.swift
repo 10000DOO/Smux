@@ -72,9 +72,11 @@ extension AutoSaveState {
 @MainActor
 final class AutoSaveCoordinator {
     typealias SaveAction = @MainActor @Sendable (DocumentSession.ID) async -> DocumentSaveResult
+    typealias StatusHandler = @MainActor @Sendable (AutoSaveStatus) -> Void
 
     private let debounceNanoseconds: UInt64
     private let saveAction: SaveAction
+    private let statusDidChange: StatusHandler?
     private var scheduledTasks: [DocumentSession.ID: Task<Void, Never>] = [:]
     private var scheduleTokens: [DocumentSession.ID: UUID] = [:]
     private var savingDocumentIDs: Set<DocumentSession.ID> = []
@@ -82,18 +84,21 @@ final class AutoSaveCoordinator {
 
     init(
         debounceInterval: TimeInterval = 1,
-        saveAction: @escaping SaveAction = { documentID in .saved(documentID: documentID) }
+        saveAction: @escaping SaveAction = { documentID in .saved(documentID: documentID) },
+        statusDidChange: StatusHandler? = nil
     ) {
         self.debounceNanoseconds = Self.nanoseconds(for: debounceInterval)
         self.saveAction = saveAction
+        self.statusDidChange = statusDidChange
     }
 
-    func scheduleAutosave(for documentID: DocumentSession.ID) {
+    @discardableResult
+    func scheduleAutosave(for documentID: DocumentSession.ID) -> AutoSaveStatus {
         cancelScheduledAutosave(for: documentID, markCancelled: false)
 
         let token = UUID()
         scheduleTokens[documentID] = token
-        statuses[documentID] = .scheduled(documentID: documentID)
+        setStatus(.scheduled(documentID: documentID))
 
         scheduledTasks[documentID] = Task { @MainActor in
             do {
@@ -111,11 +116,22 @@ final class AutoSaveCoordinator {
                 finishCancelledAutosave(documentID: documentID, token: token)
             }
         }
+
+        return status(for: documentID)
     }
 
     @discardableResult
     func cancelAutosave(for documentID: DocumentSession.ID) -> AutoSaveStatus {
         cancelScheduledAutosave(for: documentID, markCancelled: true)
+    }
+
+    @discardableResult
+    func discardScheduledAutosave(for documentID: DocumentSession.ID) -> AutoSaveStatus {
+        cancelScheduledAutosave(
+            for: documentID,
+            markCancelled: false,
+            replacementStatus: .idle(documentID: documentID)
+        )
     }
 
     func status(for documentID: DocumentSession.ID) -> AutoSaveStatus {
@@ -131,16 +147,16 @@ final class AutoSaveCoordinator {
                 documentID: documentID,
                 failure: DocumentSaveFailure(documentEditorError: .saveAlreadyInProgress)
             )
-            statuses[documentID] = .completed(documentID: documentID, result: result)
+            setStatus(.completed(documentID: documentID, result: result))
 
             return result
         }
 
         savingDocumentIDs.insert(documentID)
-        statuses[documentID] = .saving(documentID: documentID)
+        setStatus(.saving(documentID: documentID))
         let result = await saveAction(documentID)
         savingDocumentIDs.remove(documentID)
-        statuses[documentID] = .completed(documentID: documentID, result: result)
+        setStatus(.completed(documentID: documentID, result: result))
 
         return result
     }
@@ -153,7 +169,8 @@ final class AutoSaveCoordinator {
     @discardableResult
     private func cancelScheduledAutosave(
         for documentID: DocumentSession.ID,
-        markCancelled: Bool
+        markCancelled: Bool,
+        replacementStatus: AutoSaveStatus? = nil
     ) -> AutoSaveStatus {
         guard let scheduledTask = scheduledTasks[documentID] else {
             return status(for: documentID)
@@ -164,7 +181,9 @@ final class AutoSaveCoordinator {
         scheduleTokens[documentID] = nil
 
         if markCancelled {
-            statuses[documentID] = .cancelled(documentID: documentID)
+            setStatus(.cancelled(documentID: documentID))
+        } else if let replacementStatus {
+            setStatus(replacementStatus)
         }
 
         return status(for: documentID)
@@ -177,7 +196,12 @@ final class AutoSaveCoordinator {
 
         scheduledTasks[documentID] = nil
         scheduleTokens[documentID] = nil
-        statuses[documentID] = .cancelled(documentID: documentID)
+        setStatus(.cancelled(documentID: documentID))
+    }
+
+    private func setStatus(_ status: AutoSaveStatus) {
+        statuses[status.documentID] = status
+        statusDidChange?(status)
     }
 
     private static func nanoseconds(for interval: TimeInterval) -> UInt64 {

@@ -96,6 +96,14 @@ extension PanelNode {
         return children.lazy.compactMap(\.firstLeafID).first
     }
 
+    var leafIDs: [ID] {
+        if isLeaf {
+            return [id]
+        }
+
+        return children.flatMap(\.leafIDs)
+    }
+
     func contains(panelID: ID) -> Bool {
         if id == panelID {
             return true

@@ -40,21 +40,45 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
-            if navigationAction.navigationType == .linkActivated {
-                decisionHandler(.cancel)
-            } else {
-                decisionHandler(.allow)
+            decisionHandler(Self.policy(for: navigationAction.navigationType, url: navigationAction.request.url))
+        }
+
+        static func policy(for navigationType: WKNavigationType, url: URL?) -> WKNavigationActionPolicy {
+            guard navigationType == .linkActivated else {
+                return .allow
             }
+
+            return isInternalAnchorURL(url) ? .allow : .cancel
+        }
+
+        private static func isInternalAnchorURL(_ url: URL?) -> Bool {
+            guard let url, url.fragment != nil else {
+                return false
+            }
+
+            if url.scheme == nil, url.host == nil, url.path.isEmpty {
+                return true
+            }
+
+            return url.scheme == "about" && url.host == nil && url.path == "blank"
         }
     }
 }
 
 nonisolated enum PreviewWebViewHTMLBuilder {
     static func makeHTML(state: PreviewState?) -> String {
-        htmlDocument(body: bodyHTML(state: state), zoom: state?.zoom ?? 1)
+        let mermaidJavaScript = state?.mermaidBlocks.isEmpty == false
+            ? bundledMermaidJavaScriptSource
+            : nil
+
+        return htmlDocument(
+            body: bodyHTML(state: state, rendersMermaidInBrowser: mermaidJavaScript != nil),
+            zoom: state?.zoom ?? 1,
+            mermaidJavaScript: mermaidJavaScript
+        )
     }
 
-    private static func bodyHTML(state: PreviewState?) -> String {
+    private static func bodyHTML(state: PreviewState?, rendersMermaidInBrowser: Bool) -> String {
         guard let state else {
             return emptyStateHTML(
                 title: "No preview available",
@@ -70,7 +94,7 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         var placedBlockIDs = Set<UUID>()
 
         for block in state.mermaidBlocks {
-            let blockHTML = mermaidBlockHTML(block)
+            let blockHTML = mermaidBlockHTML(block, rendersInBrowser: rendersMermaidInBrowser)
             if replaceMermaidPlaceholder(blockID: block.id, in: &body, with: blockHTML) {
                 placedBlockIDs.insert(block.id)
             }
@@ -88,7 +112,7 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             body += """
 
             <section class="mermaid-fallback-section" aria-label="Mermaid diagrams">
-            \(unplacedBlocks.map(mermaidBlockHTML).joined(separator: "\n"))
+            \(unplacedBlocks.map { mermaidBlockHTML($0, rendersInBrowser: rendersMermaidInBrowser) }.joined(separator: "\n"))
             </section>
             """
         }
@@ -100,6 +124,12 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         return body
     }
 
+    private static let bundledMermaidJavaScriptSource: String? = {
+        try? BundledMermaidJavaScriptResourceProvider()
+            .loadMermaidJavaScriptResource()
+            .source
+    }()
+
     private static func unavailableStateHTML(state: PreviewState) -> String {
         let title = state.errors.isEmpty ? "Preview unavailable" : "Preview could not be rendered"
         let message = state.errors.isEmpty
@@ -110,8 +140,45 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             + (state.errors.isEmpty ? "" : "\n\(renderErrorsHTML(state.errors))")
     }
 
-    private static func htmlDocument(body: String, zoom: Double) -> String {
+    private static func htmlDocument(body: String, zoom: Double, mermaidJavaScript: String?) -> String {
         let normalizedZoom = min(max(zoom.isFinite ? zoom : 1, 0.5), 3)
+        let mermaidScripts = mermaidJavaScript.map { source in
+            """
+            <script>
+            \(source)
+            </script>
+            <script>
+            (() => {
+                const blocks = Array.from(document.querySelectorAll(".mermaid-render-source"));
+                if (!blocks.length || !window.mermaid) {
+                    return;
+                }
+
+                window.mermaid.initialize({
+                    startOnLoad: false,
+                    securityLevel: "strict",
+                    theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"
+                });
+
+                window.mermaid.run({ nodes: blocks }).then(() => {
+                    document.querySelectorAll(".mermaid-block--rendering .mermaid-badge").forEach((badge) => {
+                        badge.textContent = "Rendered";
+                    });
+                }).catch((error) => {
+                    document.querySelectorAll(".mermaid-block--rendering").forEach((block) => {
+                        block.classList.remove("mermaid-block--rendering");
+                        block.classList.add("mermaid-block--failed");
+                        const meta = document.createElement("p");
+                        meta.className = "mermaid-meta";
+                        meta.textContent = error && error.message ? error.message : "Mermaid render failed.";
+                        block.querySelector(".mermaid-artifact")?.appendChild(meta);
+                        block.querySelector(".mermaid-badge").textContent = "Failed";
+                    });
+                });
+            })();
+            </script>
+            """
+        } ?? ""
 
         return """
         <!doctype html>
@@ -119,7 +186,7 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
         <style>
         :root {
             color-scheme: light dark;
@@ -310,6 +377,7 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         </head>
         <body>
         \(body)
+        \(mermaidScripts)
         </body>
         </html>
         """
@@ -327,8 +395,9 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         return true
     }
 
-    private static func mermaidBlockHTML(_ block: MermaidBlockState) -> String {
-        let status = escapeHTML(block.status.rawValue.capitalized)
+    private static func mermaidBlockHTML(_ block: MermaidBlockState, rendersInBrowser: Bool) -> String {
+        let browserRenderPending = rendersInBrowser && block.artifact == nil && block.errorMessage == nil
+        let status = browserRenderPending ? "Rendering" : escapeHTML(block.status.rawValue.capitalized)
         let artifactHTML: String
 
         switch block.artifact {
@@ -337,18 +406,25 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         case .sanitizedHTML(let html):
             artifactHTML = html
         case nil:
-            let placeholder = block.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if browserRenderPending {
+                artifactHTML = """
+                <pre class="mermaid mermaid-render-source">\(escapeHTML(block.source))</pre>
+                """
+            } else {
+                let placeholder = block.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "Diagram output is \(block.status.rawValue)."
                 : block.source
-            artifactHTML = "<pre><code>\(escapeHTML(placeholder))</code></pre>"
+                artifactHTML = "<pre><code>\(escapeHTML(placeholder))</code></pre>"
+            }
         }
 
         let errorHTML = block.errorMessage.map {
             "<p class=\"mermaid-meta\">\(escapeHTML($0))</p>"
         } ?? ""
+        let statusClass = browserRenderPending ? MermaidBlockRenderStatus.rendering.rawValue : block.status.rawValue
 
         return """
-        <section class="mermaid-block mermaid-block--\(escapeAttribute(block.status.rawValue))" data-mermaid-block-id="\(escapeAttribute(block.id.uuidString))">
+        <section class="mermaid-block mermaid-block--\(escapeAttribute(statusClass))" data-mermaid-block-id="\(escapeAttribute(block.id.uuidString))">
         <div class="mermaid-header">
         <span>Mermaid diagram, lines \(block.sourceRange.startLine)-\(block.sourceRange.endLine)</span>
         <span class="mermaid-badge">\(status)</span>

@@ -26,8 +26,8 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertEqual(state.renderVersion, 7)
         XCTAssertTrue(state.errors.isEmpty)
         XCTAssertTrue(state.mermaidBlocks.isEmpty)
-        XCTAssertTrue(html.contains("<h1>Title</h1>"))
-        XCTAssertTrue(html.contains("<h2>Section</h2>"))
+        XCTAssertTrue(html.contains("<h1 id=\"title\">Title</h1>"))
+        XCTAssertTrue(html.contains("<h2 id=\"section\">Section</h2>"))
         XCTAssertTrue(html.contains("<ul>"))
         XCTAssertTrue(html.contains("<li>One</li>"))
         XCTAssertTrue(html.contains("<a href=\"https://example.com/path?a=1&amp;b=2\" rel=\"noopener noreferrer\">Two</a>"))
@@ -55,8 +55,32 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertTrue(html.contains("<table>"))
         XCTAssertTrue(html.contains("<th>Name</th>"))
         XCTAssertTrue(html.contains("<td>&lt;safe&gt;</td>"))
-        XCTAssertTrue(html.contains("<pre><code class=\"language-swift\">"))
+        XCTAssertTrue(html.contains("<pre><code class=\"language-swift\" data-language=\"swift\">"))
         XCTAssertTrue(html.contains("let tag = &quot;&lt;main&gt;&quot;"))
+    }
+
+    func testGeneratesStableGitHubStyleHeadingAnchorsAndInternalLinks() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let markdown = """
+        # Hello, World!
+        ## Hello World
+        ### Hello World
+        # [API Guide](https://example.com/api)
+        # C# Guide
+
+        [Jump](#hello-world-1)
+        """
+
+        let state = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertTrue(html.contains("<h1 id=\"hello-world\">Hello, World!</h1>"))
+        XCTAssertTrue(html.contains("<h2 id=\"hello-world-1\">Hello World</h2>"))
+        XCTAssertTrue(html.contains("<h3 id=\"hello-world-2\">Hello World</h3>"))
+        XCTAssertTrue(html.contains("<h1 id=\"api-guide\"><a href=\"https://example.com/api\" rel=\"noopener noreferrer\">API Guide</a></h1>"))
+        XCTAssertTrue(html.contains("<h1 id=\"c-guide\">C# Guide</h1>"))
+        XCTAssertTrue(html.contains("<a href=\"#hello-world-1\" rel=\"noopener noreferrer\">Jump</a>"))
     }
 
     func testSanitizesHTMLAndUnsafeLinks() async throws {
@@ -134,7 +158,7 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertEqual(state.mermaidBlocks[0].source, "sequenceDiagram\nAlice->>Bob: Hi")
         XCTAssertEqual(state.mermaidBlocks[1].sourceRange, SourceRange(startLine: 8, endLine: 11))
         XCTAssertEqual(state.mermaidBlocks[1].source, "graph TD\nA --> B")
-        XCTAssertTrue(html.contains("<h1>Diagrams</h1>"))
+        XCTAssertTrue(html.contains("<h1 id=\"diagrams\">Diagrams</h1>"))
         XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(state.mermaidBlocks[0].id.uuidString)\""))
         XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(state.mermaidBlocks[1].id.uuidString)\""))
         XCTAssertFalse(html.contains("language-mmd"))

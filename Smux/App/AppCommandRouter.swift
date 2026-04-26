@@ -50,6 +50,14 @@ struct AppCommandRouter {
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
         panelCommanding?.splitFocusedPanel(direction: direction, surface: surface)
     }
+
+    func focusNextPanel() {
+        panelCommanding?.focusNextPanel()
+    }
+
+    func focusPreviousPanel() {
+        panelCommanding?.focusPreviousPanel()
+    }
 }
 
 enum AppCommandRouterError: Error, Equatable {

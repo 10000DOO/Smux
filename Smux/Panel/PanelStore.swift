@@ -40,6 +40,14 @@ final class PanelStore: ObservableObject, PanelCommanding {
         replacePanel(panelID: targetPanelID, with: surface)
     }
 
+    func focusNextPanel() {
+        focusPanel(offset: 1, fallbackToLast: false)
+    }
+
+    func focusPreviousPanel() {
+        focusPanel(offset: -1, fallbackToLast: true)
+    }
+
     func splitPanel(
         panelID: PanelNode.ID,
         direction: SplitDirection,
@@ -69,5 +77,27 @@ final class PanelStore: ObservableObject, PanelCommanding {
     func reset(to rootNode: PanelNode = .placeholder) {
         self.rootNode = rootNode
         focusedPanelID = rootNode.firstLeafID
+    }
+
+    private func focusPanel(offset: Int, fallbackToLast: Bool) {
+        let leafIDs = rootNode.leafIDs
+
+        guard !leafIDs.isEmpty else {
+            focusedPanelID = nil
+            return
+        }
+
+        guard let focusedPanelID,
+              let currentIndex = leafIDs.firstIndex(of: focusedPanelID)
+        else {
+            let fallbackIndex = fallbackToLast
+                ? leafIDs.index(before: leafIDs.endIndex)
+                : leafIDs.startIndex
+            self.focusedPanelID = leafIDs[fallbackIndex]
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + leafIDs.count) % leafIDs.count
+        self.focusedPanelID = leafIDs[nextIndex]
     }
 }

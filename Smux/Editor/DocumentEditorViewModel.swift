@@ -7,17 +7,37 @@ final class DocumentEditorViewModel: ObservableObject {
     @Published var text = ""
     @Published var selectedRange: NSRange?
     @Published private(set) var lastSaveResult: DocumentSaveResult?
+    @Published private(set) var autoSaveStatus: AutoSaveStatus?
 
     private let sessionStore: any DocumentSessionStoring
     private let fileIO: any DocumentFileIO
+    private let autoSaveDebounceInterval: TimeInterval
     private var savingSessionIDs: Set<DocumentSession.ID> = []
+    private lazy var autoSaveCoordinator = AutoSaveCoordinator(
+        debounceInterval: autoSaveDebounceInterval,
+        saveAction: { [weak self] documentID in
+            guard let self else {
+                return DocumentSaveResult.failed(
+                    documentID: documentID,
+                    failure: DocumentSaveFailure(documentEditorError: .missingSession)
+                )
+            }
+
+            return await self.saveAutosaveSession(documentID: documentID)
+        },
+        statusDidChange: { [weak self] status in
+            self?.autoSaveStatus = status
+        }
+    )
 
     init(
         sessionStore: any DocumentSessionStoring = DocumentSessionStore(),
-        fileIO: any DocumentFileIO = FileBackedDocumentFileIO()
+        fileIO: any DocumentFileIO = FileBackedDocumentFileIO(),
+        autoSaveDebounceInterval: TimeInterval = 1
     ) {
         self.sessionStore = sessionStore
         self.fileIO = fileIO
+        self.autoSaveDebounceInterval = autoSaveDebounceInterval
     }
 
     func load(sessionID: DocumentSession.ID) async throws {
@@ -35,6 +55,7 @@ final class DocumentEditorViewModel: ObservableObject {
         text = loadedDocument.text
         selectedRange = NSRange(location: 0, length: 0)
         lastSaveResult = nil
+        autoSaveStatus = .idle(documentID: loadedSession.id)
         session = loadedSession
         sessionStore.upsertSession(loadedSession)
     }
@@ -69,7 +90,41 @@ final class DocumentEditorViewModel: ObservableObject {
         self.selectedRange = selectedRange
     }
 
+    @discardableResult
+    func scheduleAutosave() -> AutoSaveStatus? {
+        guard let documentID = session?.id else {
+            return nil
+        }
+
+        return autoSaveCoordinator.scheduleAutosave(for: documentID)
+    }
+
+    @discardableResult
+    func cancelAutosave() -> AutoSaveStatus? {
+        guard let documentID = session?.id else {
+            return nil
+        }
+
+        return autoSaveCoordinator.cancelAutosave(for: documentID)
+    }
+
+    @discardableResult
+    func flushAutosave() async -> DocumentSaveResult {
+        guard let documentID = session?.id else {
+            let result = DocumentSaveResult.failed(
+                documentID: nil,
+                failure: DocumentSaveFailure(documentEditorError: .missingSession)
+            )
+            lastSaveResult = result
+
+            return result
+        }
+
+        return await autoSaveCoordinator.flush(documentID: documentID)
+    }
+
     func saveNow() async throws {
+        discardPendingAutosave()
         let outcome = await saveCurrentSession()
         lastSaveResult = outcome.result
 
@@ -79,20 +134,48 @@ final class DocumentEditorViewModel: ObservableObject {
     }
 
     func saveNowResult() async -> DocumentSaveResult {
+        discardPendingAutosave()
         let outcome = await saveCurrentSession()
         lastSaveResult = outcome.result
 
         return outcome.result
     }
 
-    private func saveCurrentSession() async -> (result: DocumentSaveResult, error: (any Error)?) {
+    private func discardPendingAutosave() {
+        guard let documentID = session?.id else {
+            return
+        }
+
+        autoSaveCoordinator.discardScheduledAutosave(for: documentID)
+    }
+
+    private func saveAutosaveSession(documentID: DocumentSession.ID) async -> DocumentSaveResult {
+        let outcome = await saveCurrentSession(documentID: documentID)
+        lastSaveResult = outcome.result
+
+        return outcome.result
+    }
+
+    private func saveCurrentSession(
+        documentID expectedDocumentID: DocumentSession.ID? = nil
+    ) async -> (result: DocumentSaveResult, error: (any Error)?) {
         guard var currentSession = session else {
             return (
                 DocumentSaveResult.failed(
-                    documentID: nil,
+                    documentID: expectedDocumentID,
                     failure: DocumentSaveFailure(documentEditorError: .missingSession)
                 ),
                 DocumentEditorError.missingSession
+            )
+        }
+
+        if let expectedDocumentID, currentSession.id != expectedDocumentID {
+            return (
+                DocumentSaveResult.failed(
+                    documentID: expectedDocumentID,
+                    failure: DocumentSaveFailure(documentEditorError: .sessionNotFound(expectedDocumentID))
+                ),
+                DocumentEditorError.sessionNotFound(expectedDocumentID)
             )
         }
 
@@ -126,12 +209,17 @@ final class DocumentEditorViewModel: ObservableObject {
                     loadedFingerprint: loadedFingerprint,
                     currentFingerprint: diskFingerprint
                 )
-                currentSession.isDirty = true
-                currentSession.saveState = .conflicted
-                currentSession.conflict = conflict
+                var conflictedSession = session?.id == currentSession.id
+                    ? session ?? currentSession
+                    : sessionStore.session(for: currentSession.id) ?? currentSession
+                conflictedSession.isDirty = true
+                conflictedSession.saveState = .conflicted
+                conflictedSession.conflict = conflict
 
-                session = currentSession
-                sessionStore.upsertSession(currentSession)
+                if session?.id == currentSession.id {
+                    session = conflictedSession
+                }
+                sessionStore.upsertSession(conflictedSession)
                 let error = DocumentEditorError.conflicted(conflict)
 
                 return (

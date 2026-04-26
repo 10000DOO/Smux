@@ -26,6 +26,34 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(split.firstLeafID, firstPanelID)
     }
 
+    func testPanelNodeLeafIDsPreserveNestedSplitOrder() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let thirdPanelID = UUID()
+        let fourthPanelID = UUID()
+        let nested = PanelNode.split(
+            direction: .horizontal,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .split(
+                direction: .vertical,
+                first: .leaf(id: secondPanelID, surface: .empty),
+                second: .split(
+                    direction: .horizontal,
+                    first: .leaf(id: thirdPanelID, surface: .empty),
+                    second: .leaf(id: fourthPanelID, surface: .empty)
+                )
+            )
+        )
+
+        XCTAssertEqual(nested.leafIDs, [
+            firstPanelID,
+            secondPanelID,
+            thirdPanelID,
+            fourthPanelID
+        ])
+        XCTAssertEqual(nested.firstLeafID, firstPanelID)
+    }
+
     func testPanelNodeFactoryClampsLowRatioAndLimitsSplitChildren() {
         let first = PanelNode.leaf(surface: .empty)
         let second = PanelNode.leaf(surface: .empty)
@@ -138,6 +166,87 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         XCTAssertEqual(store.focusedPanelID, firstPanelID)
         XCTAssertEqual(store.rootNode, split)
+    }
+
+    @MainActor
+    func testPanelStoreFocusNextAndPreviousKeepSingleLeafFocused() {
+        let panelID = UUID()
+        let store = PanelStore(rootNode: .leaf(id: panelID, surface: .empty))
+
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, panelID)
+
+        store.focusPreviousPanel()
+        XCTAssertEqual(store.focusedPanelID, panelID)
+    }
+
+    @MainActor
+    func testPanelStoreFocusNextAndPreviousFollowNestedLeafOrder() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let thirdPanelID = UUID()
+        let tree = PanelNode.split(
+            direction: .horizontal,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .split(
+                direction: .vertical,
+                first: .leaf(id: secondPanelID, surface: .empty),
+                second: .leaf(id: thirdPanelID, surface: .empty)
+            )
+        )
+        let store = PanelStore(rootNode: tree, focusedPanelID: firstPanelID)
+
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, secondPanelID)
+
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, thirdPanelID)
+
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, firstPanelID)
+
+        store.focusPreviousPanel()
+        XCTAssertEqual(store.focusedPanelID, thirdPanelID)
+    }
+
+    @MainActor
+    func testPanelStoreFocusNextAndPreviousRecoverFromNilFocus() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let tree = PanelNode.split(
+            direction: .horizontal,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .leaf(id: secondPanelID, surface: .empty)
+        )
+        let store = PanelStore(rootNode: tree)
+
+        store.focus(panelID: nil)
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, firstPanelID)
+
+        store.focus(panelID: nil)
+        store.focusPreviousPanel()
+        XCTAssertEqual(store.focusedPanelID, secondPanelID)
+    }
+
+    @MainActor
+    func testPanelStoreFocusNextAndPreviousRecoverFromUnknownFocus() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let tree = PanelNode.split(
+            direction: .horizontal,
+            first: .leaf(id: firstPanelID, surface: .empty),
+            second: .leaf(id: secondPanelID, surface: .empty)
+        )
+        let store = PanelStore(rootNode: tree)
+
+        store.focusedPanelID = UUID()
+        store.focusNextPanel()
+        XCTAssertEqual(store.focusedPanelID, firstPanelID)
+
+        store.focusedPanelID = UUID()
+        store.focusPreviousPanel()
+        XCTAssertEqual(store.focusedPanelID, secondPanelID)
     }
 
     @MainActor
@@ -798,6 +907,27 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorFocusCommandsForwardToPanelStore() {
+        let firstPanelID = UUID()
+        let secondPanelID = UUID()
+        let panelStore = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: firstPanelID, surface: .empty),
+                second: .leaf(id: secondPanelID, surface: .empty)
+            ),
+            focusedPanelID: firstPanelID
+        )
+        let coordinator = WorkspaceCoordinator(panelStore: panelStore)
+
+        coordinator.focusNextPanel()
+        XCTAssertEqual(panelStore.focusedPanelID, secondPanelID)
+
+        coordinator.focusPreviousPanel()
+        XCTAssertEqual(panelStore.focusedPanelID, firstPanelID)
+    }
+
+    @MainActor
     func testAppCommandRouterForwardsCommands() async throws {
         let handler = RecordingCommandHandler()
         let router = AppCommandRouter(
@@ -819,6 +949,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         try await router.createTerminal(in: workspaceID)
         try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
         router.splitFocusedPanel(direction: .vertical, surface: splitSurface)
+        router.focusNextPanel()
+        router.focusPreviousPanel()
 
         XCTAssertEqual(handler.openedRootURL, rootURL)
         XCTAssertEqual(handler.closedWorkspaceID, closedWorkspaceID)
@@ -828,10 +960,12 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(handler.terminalPanelID, panelID)
         XCTAssertEqual(handler.splitDirection, .vertical)
         XCTAssertEqual(handler.splitSurface, splitSurface)
+        XCTAssertEqual(handler.focusNextCount, 1)
+        XCTAssertEqual(handler.focusPreviousCount, 1)
     }
 
     @MainActor
-    func testAppCommandRouterThrowsForMissingAsyncHandlersAndNoOpsSyncSplit() async {
+    func testAppCommandRouterThrowsForMissingAsyncHandlersAndNoOpsSyncPanelCommands() async {
         let router = AppCommandRouter()
         let rootURL = URL(fileURLWithPath: "/tmp/MissingWorkspace")
         let documentURL = URL(fileURLWithPath: "/tmp/MissingWorkspace/README.md")
@@ -873,6 +1007,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         }
 
         router.splitFocusedPanel(direction: .horizontal, surface: .empty)
+        router.focusNextPanel()
+        router.focusPreviousPanel()
     }
 
     private actor InMemoryWorkspaceRepository: WorkspaceRepository {
@@ -983,6 +1119,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var terminalPanelID: PanelNode.ID?
         var splitDirection: SplitDirection?
         var splitSurface: PanelSurfaceDescriptor?
+        var focusNextCount = 0
+        var focusPreviousCount = 0
 
         func openWorkspace(rootURL: URL) async throws {
             openedRootURL = rootURL
@@ -1014,6 +1152,14 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
             splitDirection = direction
             splitSurface = surface
+        }
+
+        func focusNextPanel() {
+            focusNextCount += 1
+        }
+
+        func focusPreviousPanel() {
+            focusPreviousCount += 1
         }
     }
 }

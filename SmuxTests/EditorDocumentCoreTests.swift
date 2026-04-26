@@ -285,6 +285,175 @@ final class EditorDocumentCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testViewModelSchedulesAutosaveAndPublishesCompletedStatus() async throws {
+        let loadedFingerprint = makeFingerprint(size: 6, contentHash: "loaded")
+        let savedFingerprint = makeFingerprint(size: 5, contentHash: "saved")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/Autosave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            savedFingerprint: savedFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(
+            sessionStore: store,
+            fileIO: fileIO,
+            autoSaveDebounceInterval: 0.01
+        )
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        let scheduledStatus = viewModel.scheduleAutosave()
+
+        XCTAssertEqual(scheduledStatus?.state, .scheduled)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .scheduled)
+
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(fileIO.saveAttemptCount, 1)
+        XCTAssertEqual(fileIO.savedText, "After")
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .saved)
+        XCTAssertEqual(viewModel.autoSaveStatus?.result?.state, .clean)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .clean)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+        XCTAssertEqual(viewModel.session?.isDirty, false)
+        XCTAssertEqual(viewModel.session?.fileFingerprint, savedFingerprint)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testFlushAutosavePropagatesConflictToObservableState() async throws {
+        let loadedFingerprint = makeFingerprint(size: 6, contentHash: "loaded")
+        let diskFingerprint = makeFingerprint(size: 12, contentHash: "external")
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/AutosaveConflict.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: loadedFingerprint),
+            fingerprintResult: diskFingerprint
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        viewModel.scheduleAutosave()
+        let result = await viewModel.flushAutosave()
+
+        XCTAssertEqual(result.state, .conflicted)
+        XCTAssertEqual(result.conflict?.loadedFingerprint, loadedFingerprint)
+        XCTAssertEqual(result.conflict?.currentFingerprint, diskFingerprint)
+        XCTAssertNil(fileIO.savedText)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .conflicted)
+        XCTAssertEqual(viewModel.autoSaveStatus?.conflict, result.conflict)
+        XCTAssertEqual(viewModel.lastSaveResult, result)
+        XCTAssertEqual(viewModel.session?.saveState, .conflicted)
+        XCTAssertEqual(viewModel.session?.conflict, result.conflict)
+        XCTAssertEqual(viewModel.session?.isDirty, true)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testFlushAutosavePropagatesFailureToObservableState() async throws {
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/AutosaveFailure.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: makeFingerprint()),
+            saveError: EditorDocumentCoreTestError.saveFailed
+        )
+        let viewModel = DocumentEditorViewModel(sessionStore: store, fileIO: fileIO)
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        viewModel.scheduleAutosave()
+        let result = await viewModel.flushAutosave()
+
+        XCTAssertEqual(result.state, .failed)
+        XCTAssertEqual(result.failure?.kind, .fileIO)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .failed)
+        XCTAssertEqual(viewModel.autoSaveStatus?.failure, result.failure)
+        XCTAssertEqual(viewModel.lastSaveResult, result)
+        XCTAssertEqual(viewModel.session?.saveState, .failed)
+        XCTAssertEqual(viewModel.session?.isDirty, true)
+        XCTAssertEqual(store.session(for: session.id), viewModel.session)
+    }
+
+    @MainActor
+    func testSaveNowResultCancelsPendingAutosaveWithoutDuplicateWrite() async throws {
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/ExplicitCancelsAutosave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: makeFingerprint())
+        )
+        let viewModel = DocumentEditorViewModel(
+            sessionStore: store,
+            fileIO: fileIO,
+            autoSaveDebounceInterval: 0.05
+        )
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        viewModel.scheduleAutosave()
+        let result = await viewModel.saveNowResult()
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(result.state, .clean)
+        XCTAssertEqual(fileIO.saveAttemptCount, 1)
+        XCTAssertEqual(fileIO.savedText, "After")
+        XCTAssertEqual(viewModel.lastSaveResult, result)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .idle)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+    }
+
+    @MainActor
+    func testSaveNowResultDuringAutosaveUsesSavingGuardWithoutDuplicateWrite() async throws {
+        let saveGate = SaveGate()
+        let session = DocumentSession.make(
+            workspaceID: Workspace.ID(),
+            url: URL(fileURLWithPath: "/tmp/ExplicitDuringAutosave.md")
+        )
+        let store = DocumentSessionStore()
+        let fileIO = StubDocumentFileIO(
+            loadedDocument: LoadedDocument(text: "Before", fingerprint: makeFingerprint()),
+            saveGate: saveGate
+        )
+        let viewModel = DocumentEditorViewModel(
+            sessionStore: store,
+            fileIO: fileIO,
+            autoSaveDebounceInterval: 0
+        )
+
+        try await viewModel.load(session: session)
+        viewModel.updateText("After")
+        viewModel.scheduleAutosave()
+        await saveGate.waitUntilWaiting()
+
+        let blockedResult = await viewModel.saveNowResult()
+
+        XCTAssertEqual(blockedResult.state, .failed)
+        XCTAssertEqual(blockedResult.failure?.kind, .saveAlreadyInProgress)
+        XCTAssertEqual(fileIO.saveAttemptCount, 1)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .saving)
+
+        await saveGate.resume()
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(fileIO.saveAttemptCount, 1)
+        XCTAssertEqual(viewModel.autoSaveStatus?.state, .saved)
+        XCTAssertEqual(viewModel.lastSaveResult?.state, .clean)
+        XCTAssertEqual(viewModel.session?.saveState, .clean)
+    }
+
+    @MainActor
     func testAutoSaveCoordinatorDebouncesScheduledSave() async throws {
         let documentID = DocumentSession.ID()
         let recorder = AutoSaveRecorder()
@@ -440,6 +609,7 @@ private final class StubDocumentFileIO: DocumentFileIO, @unchecked Sendable {
     var saveGate: SaveGate?
     private(set) var savedText: String?
     private(set) var savedURL: URL?
+    private(set) var saveAttemptCount = 0
 
     init(
         loadedDocument: LoadedDocument,
@@ -464,6 +634,8 @@ private final class StubDocumentFileIO: DocumentFileIO, @unchecked Sendable {
     }
 
     func saveText(_ text: String, to url: URL) async throws -> FileFingerprint {
+        saveAttemptCount += 1
+
         if let saveError {
             throw saveError
         }

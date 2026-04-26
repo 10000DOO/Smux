@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import Smux
 
 final class PreviewWebViewRepresentableTests: XCTestCase {
@@ -91,6 +92,29 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertTrue(html.contains("A[&lt;start&gt;] --&gt; B"))
         XCTAssertTrue(html.contains("Unsupported &lt;diagram&gt;"))
         XCTAssertFalse(html.contains("Unsupported <diagram>"))
+    }
+
+    func testNavigationPolicyAllowsInternalAnchorLinksAndBlocksExternalLinks() {
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "#section")),
+            .allow
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "about:blank#section")),
+            .allow
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "guide.md#section")),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "https://example.com/#section")),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .other, url: URL(string: "https://example.com/")),
+            .allow
+        )
     }
 
     private func makeState(

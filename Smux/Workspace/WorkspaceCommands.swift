@@ -35,4 +35,16 @@ extension TerminalCommanding {
 @MainActor
 protocol PanelCommanding {
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor)
+    func focusNextPanel()
+    func focusPreviousPanel()
+}
+
+extension WorkspaceCoordinator {
+    func focusNextPanel() {
+        panelStore?.focusNextPanel()
+    }
+
+    func focusPreviousPanel() {
+        panelStore?.focusPreviousPanel()
+    }
 }

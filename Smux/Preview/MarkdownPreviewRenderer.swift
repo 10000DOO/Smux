@@ -21,6 +21,7 @@ private nonisolated struct MarkdownHTMLRenderer {
     private let lines: [String]
     private var index = 0
     private var html: [String] = []
+    private var headingIDs: [String: Int] = [:]
     private var mermaidBlocks: [MermaidBlockState] = []
     private var errors: [PreviewRenderError] = []
 
@@ -40,7 +41,8 @@ private nonisolated struct MarkdownHTMLRenderer {
             } else if isTableStart(at: index) {
                 renderTable()
             } else if let heading = headingInfo(from: lines[index]) {
-                html.append("<h\(heading.level)>\(renderInline(heading.text))</h\(heading.level)>")
+                let id = uniqueHeadingID(for: heading.text)
+                html.append("<h\(heading.level) id=\"\(escapeAttribute(id))\">\(renderInline(heading.text))</h\(heading.level)>")
                 index += 1
             } else if blockquoteContent(from: lines[index]) != nil {
                 renderBlockquote()
@@ -95,8 +97,11 @@ private nonisolated struct MarkdownHTMLRenderer {
             )
         }
 
-        let languageClass = fence.language.map { " class=\"language-\(escapeAttribute($0))\"" } ?? ""
-        html.append("<pre><code\(languageClass)>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>")
+        let languageAttributes = fence.language.map { language -> String in
+            let escapedLanguage = escapeAttribute(language)
+            return " class=\"language-\(escapedLanguage)\" data-language=\"\(escapedLanguage)\""
+        } ?? ""
+        html.append("<pre><code\(languageAttributes)>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>")
     }
 
     private mutating func renderMermaidPlaceholder(source: String, sourceRange: SourceRange, didClose: Bool) {
@@ -268,6 +273,65 @@ private nonisolated struct MarkdownHTMLRenderer {
         let textStart = trimmed.index(after: markerEnd)
         let text = trimmed[textStart...].trimmingCharacters(in: .whitespaces)
         return HeadingInfo(level: level, text: text)
+    }
+
+    private mutating func uniqueHeadingID(for text: String) -> String {
+        let base = headingSlugBase(from: text)
+        let slug = base.isEmpty ? "section" : base
+        let count = headingIDs[slug] ?? 0
+        headingIDs[slug] = count + 1
+
+        return count == 0 ? slug : "\(slug)-\(count)"
+    }
+
+    private func headingSlugBase(from text: String) -> String {
+        let plainText = plainTextForHeadingSlug(text).lowercased()
+        var slug = ""
+        var pendingSeparator = false
+
+        for character in plainText {
+            if character.isLetter || character.isNumber {
+                if pendingSeparator, !slug.isEmpty {
+                    slug.append("-")
+                }
+
+                slug.append(character)
+                pendingSeparator = false
+            } else if character.isWhitespace || character == "-" {
+                pendingSeparator = true
+            }
+        }
+
+        return slug
+    }
+
+    private func plainTextForHeadingSlug(_ text: String) -> String {
+        var result = ""
+        var current = text.startIndex
+
+        while let labelStart = text[current...].firstIndex(of: "[") {
+            guard let labelEnd = text[labelStart...].firstIndex(of: "]") else {
+                break
+            }
+
+            let afterLabel = text.index(after: labelEnd)
+            guard afterLabel < text.endIndex, text[afterLabel] == "(" else {
+                result += String(text[current...labelStart])
+                current = text.index(after: labelStart)
+                continue
+            }
+
+            guard let urlEnd = text[afterLabel...].firstIndex(of: ")") else {
+                break
+            }
+
+            result += String(text[current..<labelStart])
+            result += String(text[text.index(after: labelStart)..<labelEnd])
+            current = text.index(after: urlEnd)
+        }
+
+        result += String(text[current...])
+        return result
     }
 
     private func blockquoteContent(from line: String) -> String? {

@@ -82,6 +82,7 @@ struct SplitPanelView: View {
             case .editor(let documentID):
                 DocumentEditorPanelSurfaceView(
                     documentID: documentID,
+                    isFocused: focusedPanelID == panelID,
                     documentSessionStore: documentSessionStore,
                     documentTextStore: documentTextStore
                 )
@@ -241,6 +242,7 @@ private struct TerminalPanelHeader: View {
 
 private struct DocumentEditorPanelSurfaceView: View {
     var documentID: DocumentSession.ID
+    var isFocused: Bool
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var documentTextStore: DocumentTextStore
     @StateObject private var viewModel: DocumentEditorViewModel
@@ -248,10 +250,12 @@ private struct DocumentEditorPanelSurfaceView: View {
 
     init(
         documentID: DocumentSession.ID,
+        isFocused: Bool,
         documentSessionStore: DocumentSessionStore,
         documentTextStore: DocumentTextStore
     ) {
         self.documentID = documentID
+        self.isFocused = isFocused
         self.documentSessionStore = documentSessionStore
         self.documentTextStore = documentTextStore
         _viewModel = StateObject(
@@ -261,7 +265,12 @@ private struct DocumentEditorPanelSurfaceView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DocumentEditorPanelHeader(session: viewModel.session ?? documentSessionStore.session(for: documentID))
+            DocumentEditorPanelHeader(
+                session: viewModel.session ?? documentSessionStore.session(for: documentID),
+                autoSaveStatus: viewModel.autoSaveStatus,
+                isFocused: isFocused,
+                onSave: saveDocument
+            )
 
             if let errorMessage {
                 ContentUnavailableView(
@@ -277,10 +286,22 @@ private struct DocumentEditorPanelSurfaceView: View {
                     onSelectionChange: viewModel.updateSelectedRange
                 )
             }
+
+            DocumentEditorSaveIssueBanner(
+                result: viewModel.lastSaveResult,
+                onReload: {
+                    Task { @MainActor in
+                        await loadDocument()
+                    }
+                }
+            )
         }
         .background(Color(nsColor: .textBackgroundColor))
         .task(id: documentID) {
             await loadDocument()
+        }
+        .onDisappear {
+            viewModel.cancelAutosave()
         }
     }
 
@@ -305,11 +326,21 @@ private struct DocumentEditorPanelSurfaceView: View {
             text: viewModel.text,
             version: viewModel.session?.textVersion ?? 0
         )
+        viewModel.scheduleAutosave()
+    }
+
+    private func saveDocument() {
+        Task { @MainActor in
+            _ = await viewModel.saveNowResult()
+        }
     }
 }
 
 private struct DocumentEditorPanelHeader: View {
     var session: DocumentSession?
+    var autoSaveStatus: AutoSaveStatus?
+    var isFocused: Bool
+    var onSave: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -317,15 +348,100 @@ private struct DocumentEditorPanelHeader: View {
             Text(session?.url.lastPathComponent ?? "Editor")
                 .lineLimit(1)
             Spacer()
-            if session?.isDirty == true {
-                Text("Modified")
+            if let statusText {
+                Text(statusText)
                     .foregroundStyle(.secondary)
             }
+            Button(action: onSave) {
+                Label("Save", systemImage: "square.and.arrow.down")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!isFocused || session == nil)
+            .keyboardShortcut("s", modifiers: [.command])
         }
         .font(.caption)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var statusText: String? {
+        if let autoSaveStatus {
+            switch autoSaveStatus.state {
+            case .scheduled:
+                return "Autosave pending"
+            case .saving:
+                return "Saving"
+            case .saved:
+                return "Saved"
+            case .dirty:
+                return "Modified"
+            case .failed:
+                return "Save failed"
+            case .conflicted:
+                return "Conflict"
+            case .cancelled:
+                return session?.isDirty == true ? "Modified" : nil
+            case .idle:
+                break
+            }
+        }
+
+        switch session?.saveState {
+        case .dirty:
+            return "Modified"
+        case .saving:
+            return "Saving"
+        case .failed:
+            return "Save failed"
+        case .conflicted:
+            return "Conflict"
+        case .clean, nil:
+            return nil
+        }
+    }
+}
+
+private struct DocumentEditorSaveIssueBanner: View {
+    var result: DocumentSaveResult?
+    var onReload: () -> Void
+
+    var body: some View {
+        if let message {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text(message)
+                    .lineLimit(2)
+                Spacer()
+                if result?.state == .conflicted {
+                    Button("Reload") {
+                        onReload()
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color(nsColor: .controlBackgroundColor))
+        }
+    }
+
+    private var message: String? {
+        guard let result else {
+            return nil
+        }
+
+        switch result.state {
+        case .conflicted:
+            return "The file changed on disk. Reload before saving again."
+        case .failed:
+            return result.failure?.message ?? "The document could not be saved."
+        case .clean, .dirty, .saving:
+            return nil
+        }
     }
 }
 

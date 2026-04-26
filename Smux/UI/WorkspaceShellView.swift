@@ -56,6 +56,16 @@ struct WorkspaceShellView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, minHeight: 560)
+        .overlay(alignment: .topLeading) {
+            WorkspaceCommandShortcutLayer(
+                commandRouter: commandRouter,
+                activeWorkspaceID: workspaceStore.activeWorkspace?.id,
+                focusedPanelID: panelStore.focusedPanelID,
+                onCommandError: { message in
+                    workspaceStore.openErrorMessage = message
+                }
+            )
+        }
         .alert(
             "Smux",
             isPresented: Binding(
@@ -75,6 +85,69 @@ struct WorkspaceShellView: View {
         }
         .task(id: workspaceStore.activeWorkspace?.id) {
             await loadFileTreeForActiveWorkspace()
+        }
+    }
+}
+
+private struct WorkspaceCommandShortcutLayer: View {
+    var commandRouter: AppCommandRouter
+    var activeWorkspaceID: Workspace.ID?
+    var focusedPanelID: PanelNode.ID?
+    var onCommandError: (String) -> Void
+
+    var body: some View {
+        Group {
+            shortcutButton("Focus Next Panel") {
+                commandRouter.focusNextPanel()
+            }
+            .keyboardShortcut("]", modifiers: [.command, .shift])
+
+            shortcutButton("Focus Previous Panel") {
+                commandRouter.focusPreviousPanel()
+            }
+            .keyboardShortcut("[", modifiers: [.command, .shift])
+
+            shortcutButton("Split Panel Horizontally") {
+                commandRouter.splitFocusedPanel(direction: .vertical, surface: .empty)
+            }
+            .keyboardShortcut("-", modifiers: [.command, .shift])
+
+            shortcutButton("Split Panel Vertically") {
+                commandRouter.splitFocusedPanel(direction: .horizontal, surface: .empty)
+            }
+            .keyboardShortcut("\\", modifiers: [.command, .shift])
+
+            shortcutButton("Create Terminal") {
+                createTerminal()
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+        }
+        .buttonStyle(.plain)
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+    }
+
+    private func shortcutButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+    }
+
+    private func createTerminal() {
+        guard let activeWorkspaceID else {
+            onCommandError("No workspace is currently active.")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                if let focusedPanelID {
+                    try await commandRouter.createTerminal(in: activeWorkspaceID, replacingPanel: focusedPanelID)
+                } else {
+                    try await commandRouter.createTerminal(in: activeWorkspaceID)
+                }
+            } catch {
+                onCommandError("Failed to create terminal: \(error.localizedDescription)")
+            }
         }
     }
 }
