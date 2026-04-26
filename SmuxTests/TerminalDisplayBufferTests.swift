@@ -43,12 +43,66 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "new prompt")
     }
 
+    func testClearLineToCursorKeepsCursorColumn() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("abcdef\u{1B}[3G\u{1B}[1KZ")
+
+        XCTAssertEqual(buffer.text, "  Zdef")
+    }
+
     func testClearScreenRemovesPreviousContent() {
         var buffer = TerminalDisplayBuffer()
 
         buffer.append("before\ncontent\u{1B}[H\u{1B}[2Jafter")
 
         XCTAssertEqual(buffer.text, "after")
+    }
+
+    func testClearScreenFromCursorPreservesPreviousContent() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("one\ntwo\nthree\u{1B}[2;2H\u{1B}[J")
+
+        XCTAssertEqual(buffer.text, "one\nt")
+    }
+
+    func testClearScreenToCursorPreservesFollowingContent() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("one\ntwo\nthree\u{1B}[2;2H\u{1B}[1J")
+
+        XCTAssertEqual(buffer.text, "\n  o\nthree")
+    }
+
+    func testCursorMovementOverwritesExistingCells() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("hello\u{1B}[2DXY")
+
+        XCTAssertEqual(buffer.text, "helXY")
+    }
+
+    func testAlternateScreenRestoresPrimaryDisplayAndCursor() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("prompt")
+        buffer.append("\u{1B}[?1049halter")
+
+        XCTAssertEqual(buffer.text, "alter")
+
+        buffer.append("\u{1B}[?1049l done")
+
+        XCTAssertEqual(buffer.text, "prompt done")
+    }
+
+    func testTerminalFixtureHandlesAlternateScreenAndCursorUpdates() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("ready")
+        buffer.append("\u{1B}[?1049hloading\u{1B}[2DOK\u{1B}[?1049l")
+
+        XCTAssertEqual(buffer.text, "ready")
     }
 
     func testUTF8TextIsPreserved() {

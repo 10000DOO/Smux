@@ -10,6 +10,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
     private var cursorColumn: Int
     private var parserState: ParserState = .normal
     private var carriageReturnPending = false
+    private var primaryScreenSnapshot: ScreenSnapshot?
 
     var text: String {
         lines.map { String($0) }.joined(separator: "\n")
@@ -45,6 +46,7 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         cursorColumn = 0
         parserState = .normal
         carriageReturnPending = false
+        primaryScreenSnapshot = nil
     }
 
     private mutating func process(_ character: Character) {
@@ -166,6 +168,10 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
             clearScreen(parameters: parameters)
         case "K":
             clearLine(parameters: parameters)
+        case "h":
+            setPrivateMode(parameters: parameters, enabled: true)
+        case "l":
+            setPrivateMode(parameters: parameters, enabled: false)
         default:
             break
         }
@@ -234,12 +240,12 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
 
         switch parameterValue(parameters, at: 0, defaultValue: 0) {
         case 1:
-            let endIndex = min(cursorColumn, lines[cursorLineIndex].count)
-            lines[cursorLineIndex].removeSubrange(0..<endIndex)
-            cursorColumn = 0
+            replaceWithSpaces(
+                lineIndex: cursorLineIndex,
+                range: 0..<min(cursorColumn + 1, lines[cursorLineIndex].count)
+            )
         case 2:
             lines[cursorLineIndex].removeAll(keepingCapacity: true)
-            cursorColumn = 0
         default:
             guard cursorColumn < lines[cursorLineIndex].count else {
                 return
@@ -250,13 +256,14 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
 
     private mutating func clearScreen(parameters: String) {
         switch parameterValue(parameters, at: 0, defaultValue: 0) {
+        case 0:
+            clearFromCursorToEndOfScreen()
         case 1:
-            lines.removeSubrange(0...cursorLineIndex)
-            lines.insert([], at: 0)
-            cursorLineIndex = 0
-            cursorColumn = 0
-        default:
+            clearFromStartOfScreenToCursor()
+        case 2, 3:
             clearScreen()
+        default:
+            clearFromCursorToEndOfScreen()
         }
     }
 
@@ -265,6 +272,86 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         cursorLineIndex = 0
         cursorColumn = 0
         carriageReturnPending = false
+    }
+
+    private mutating func clearFromCursorToEndOfScreen() {
+        carriageReturnPending = false
+        ensureCursorLine()
+
+        if cursorColumn < lines[cursorLineIndex].count {
+            lines[cursorLineIndex].removeSubrange(cursorColumn..<lines[cursorLineIndex].count)
+        }
+
+        let nextLineIndex = cursorLineIndex + 1
+        if nextLineIndex < lines.count {
+            lines.removeSubrange(nextLineIndex..<lines.count)
+        }
+    }
+
+    private mutating func clearFromStartOfScreenToCursor() {
+        carriageReturnPending = false
+        ensureCursorLine()
+
+        if cursorLineIndex > 0 {
+            for lineIndex in 0..<cursorLineIndex {
+                lines[lineIndex].removeAll(keepingCapacity: true)
+            }
+        }
+
+        replaceWithSpaces(
+            lineIndex: cursorLineIndex,
+            range: 0..<min(cursorColumn + 1, lines[cursorLineIndex].count)
+        )
+    }
+
+    private mutating func replaceWithSpaces(lineIndex: Int, range: Range<Int>) {
+        guard lines.indices.contains(lineIndex), !range.isEmpty else {
+            return
+        }
+
+        for characterIndex in range where lines[lineIndex].indices.contains(characterIndex) {
+            lines[lineIndex][characterIndex] = " "
+        }
+    }
+
+    private mutating func setPrivateMode(parameters: String, enabled: Bool) {
+        guard hasMode(1049, in: parameters) else {
+            return
+        }
+
+        if enabled {
+            enterAlternateScreen()
+        } else {
+            leaveAlternateScreen()
+        }
+    }
+
+    private mutating func enterAlternateScreen() {
+        guard primaryScreenSnapshot == nil else {
+            clearScreen()
+            return
+        }
+
+        primaryScreenSnapshot = ScreenSnapshot(
+            lines: lines,
+            cursorLineIndex: cursorLineIndex,
+            cursorColumn: cursorColumn,
+            carriageReturnPending: carriageReturnPending
+        )
+        clearScreen()
+    }
+
+    private mutating func leaveAlternateScreen() {
+        guard let primaryScreenSnapshot else {
+            return
+        }
+
+        lines = primaryScreenSnapshot.lines
+        cursorLineIndex = primaryScreenSnapshot.cursorLineIndex
+        cursorColumn = primaryScreenSnapshot.cursorColumn
+        carriageReturnPending = primaryScreenSnapshot.carriageReturnPending
+        self.primaryScreenSnapshot = nil
+        ensureCursorLine()
     }
 
     private mutating func moveCursorVertically(by offset: Int) {
@@ -330,6 +417,14 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         return Int(value) ?? defaultValue
     }
 
+    private func hasMode(_ mode: Int, in parameters: String) -> Bool {
+        parameters
+            .split(separator: ";", omittingEmptySubsequences: false)
+            .contains { parameter in
+                Int(parameter.filter(\.isNumber)) == mode
+            }
+    }
+
     private func isIgnoredControl(_ character: Character) -> Bool {
         guard let scalar = singleScalar(from: character) else {
             return false
@@ -356,5 +451,12 @@ nonisolated struct TerminalDisplayBuffer: Equatable {
         case csi(String)
         case osc
         case oscEscape
+    }
+
+    private struct ScreenSnapshot: Equatable {
+        var lines: [[Character]]
+        var cursorLineIndex: Int
+        var cursorColumn: Int
+        var carriageReturnPending: Bool
     }
 }
