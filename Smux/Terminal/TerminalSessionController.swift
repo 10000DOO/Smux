@@ -163,8 +163,53 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         )
     }
 
+    func replaceSnapshotSessions(
+        _ restoredSessions: [TerminalSession],
+        in workspaceID: Workspace.ID
+    ) {
+        let restoredSessionIDs = Set(restoredSessions.map(\.id))
+        let removableSessionIDs = sessions.values
+            .filter { $0.workspaceID == workspaceID }
+            .filter { ptyClients[$0.id] == nil || !restoredSessionIDs.contains($0.id) }
+            .map(\.id)
+
+        for sessionID in removableSessionIDs where ptyClients[sessionID] == nil {
+            sessions.removeValue(forKey: sessionID)
+        }
+
+        for restoredSession in restoredSessions where ptyClients[restoredSession.id] == nil {
+            sessions[restoredSession.id] = Self.restoredSession(from: restoredSession)
+        }
+    }
+
+    func removeSessions(in workspaceID: Workspace.ID) {
+        let removedSessionIDs = sessions.values
+            .filter { $0.workspaceID == workspaceID }
+            .map(\.id)
+
+        for sessionID in removedSessionIDs {
+            ptyClients.removeValue(forKey: sessionID)?.terminate()
+            sessions.removeValue(forKey: sessionID)
+        }
+    }
+
+    func moveSessions(from sourceWorkspaceID: Workspace.ID, to targetWorkspaceID: Workspace.ID) {
+        guard sourceWorkspaceID != targetWorkspaceID else {
+            return
+        }
+
+        for (sessionID, var session) in sessions where session.workspaceID == sourceWorkspaceID {
+            session.workspaceID = targetWorkspaceID
+            sessions[sessionID] = session
+        }
+    }
+
     func snapshotSessions() -> [TerminalSession] {
         Array(sessions.values)
+    }
+
+    func snapshotSessions(in workspaceID: Workspace.ID) -> [TerminalSession] {
+        sessions.values.filter { $0.workspaceID == workspaceID }
     }
 
     private func makeLaunchRequest(

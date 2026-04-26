@@ -951,11 +951,12 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceCoordinatorOpenStopsDocumentWatchersAndClearsTextSnapshots() async throws {
+    func testWorkspaceCoordinatorOpenStopsDocumentWatchersAndPreservesRuntimeTextSnapshots() async throws {
         let activeWorkspace = Workspace.make(rootURL: URL(fileURLWithPath: "/tmp/ActiveWorkspace"))
         let nextRootURL = URL(fileURLWithPath: "/tmp/NextWorkspace")
         let documentURL = activeWorkspace.rootURL.appendingPathComponent("Draft.md")
         let documentID = DocumentSession.ID()
+        let documentSessionStore = DocumentSessionStore()
         let watcher = ManualFileWatcher()
         let documentFileWatchStore = DocumentFileWatchStore(fileWatcher: watcher)
         let documentTextStore = DocumentTextStore()
@@ -964,10 +965,17 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             panelStore: PanelStore(),
             workspaceRepository: NoopWorkspaceRepository(),
             gitBranchProvider: NoopGitBranchProvider(),
+            documentSessionStore: documentSessionStore,
             documentFileWatchStore: documentFileWatchStore,
             documentTextStore: documentTextStore
         )
+        let documentSession = DocumentSession.make(
+            id: documentID,
+            workspaceID: activeWorkspace.id,
+            url: documentURL
+        )
 
+        documentSessionStore.upsertSession(documentSession)
         try documentFileWatchStore.startWatching(documentID: documentID, url: documentURL)
         documentTextStore.update(documentID: documentID, text: "Draft", version: 1)
 
@@ -976,7 +984,76 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         await Task.yield()
 
         XCTAssertNil(documentFileWatchStore.latestEvent(for: documentID))
-        XCTAssertNil(documentTextStore.snapshot(for: documentID))
+        XCTAssertEqual(documentTextStore.snapshot(for: documentID), DocumentTextSnapshot(text: "Draft", version: 1))
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorSwitchingWorkspacesRestoresRuntimeWithoutTerminatingLiveTerminals() async throws {
+        let firstWorkspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/RuntimeWorkspaceA")
+        )
+        let secondRootURL = URL(fileURLWithPath: "/tmp/RuntimeWorkspaceB")
+        let workspaceStore = WorkspaceStore(activeWorkspace: firstWorkspace)
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let repository = InMemoryWorkspaceRepository()
+        let client = WorkspacePanelMockPTYClient(processID: 5317)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider(),
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceRuntimeStore: workspaceRuntimeStore
+        )
+
+        try await coordinator.createTerminal(in: firstWorkspace.id)
+        guard
+            let firstWorkspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(firstTerminalID) = firstWorkspaceSession.content
+        else {
+            XCTFail("Expected first workspace terminal.")
+            return
+        }
+
+        try await coordinator.openWorkspace(rootURL: secondRootURL)
+        let secondWorkspace = try XCTUnwrap(workspaceStore.activeWorkspace)
+        try await coordinator.createTerminal(in: secondWorkspace.id)
+        guard
+            let secondWorkspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(secondTerminalID) = secondWorkspaceSession.content
+        else {
+            XCTFail("Expected second workspace terminal.")
+            return
+        }
+
+        try await coordinator.openWorkspace(rootURL: firstWorkspace.rootURL)
+
+        XCTAssertEqual(client.terminateCallCount, 0)
+        XCTAssertEqual(panelStore.rootNode.surface, .session(sessionID: firstWorkspaceSession.id))
+        XCTAssertEqual(terminalSessionController.session(for: firstTerminalID)?.status, .running)
+        XCTAssertEqual(terminalSessionController.session(for: firstTerminalID)?.processID, 5317)
+        XCTAssertEqual(terminalSessionController.session(for: secondTerminalID)?.status, .running)
+        XCTAssertNotNil(workspaceRuntimeStore.state(for: secondWorkspace.id))
+
+        try await coordinator.openWorkspace(rootURL: secondRootURL)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .session(sessionID: secondWorkspaceSession.id))
+        XCTAssertEqual(terminalSessionController.session(for: firstTerminalID)?.status, .running)
+        XCTAssertEqual(terminalSessionController.session(for: secondTerminalID)?.status, .running)
+        XCTAssertEqual(client.terminateCallCount, 0)
     }
 
     @MainActor
@@ -1020,6 +1097,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let rootURL = URL(fileURLWithPath: "/tmp/RestoreFallback")
         let repository = ThrowingLoadWorkspaceRepository()
         let workspaceStore = WorkspaceStore()
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
         let panelStore = PanelStore(
             rootNode: .leaf(surface: .session(sessionID: TerminalSession.ID()))
         )
@@ -1027,16 +1105,198 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceStore: workspaceStore,
             panelStore: panelStore,
             workspaceRepository: repository,
-            gitBranchProvider: NoopGitBranchProvider()
+            gitBranchProvider: NoopGitBranchProvider(),
+            workspaceRuntimeStore: workspaceRuntimeStore
         )
 
         try await coordinator.openWorkspace(rootURL: rootURL)
 
+        let openedWorkspaceID = try XCTUnwrap(workspaceStore.activeWorkspace?.id)
         XCTAssertEqual(workspaceStore.activeWorkspace?.rootURL, rootURL)
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertEqual(panelStore.focusedPanelID, panelStore.rootNode.id)
+        XCTAssertNil(workspaceRuntimeStore.state(for: openedWorkspaceID))
         XCTAssertTrue(workspaceStore.openErrorMessage?.contains("Failed to restore workspace state") == true)
         XCTAssertFalse(workspaceStore.isOpeningWorkspace)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorRetriesSnapshotLoadAfterFallbackInsteadOfParkingPlaceholder() async throws {
+        let retryRootURL = URL(fileURLWithPath: "/tmp/RetryRestoreWorkspace")
+        let secondRootURL = URL(fileURLWithPath: "/tmp/RetrySecondWorkspace")
+        let restoredPanelID = PanelNode.ID()
+        let restoredPanelTree = PanelNode.leaf(id: restoredPanelID, surface: .empty)
+        let repository = RetryWorkspaceRepository(retryRootURL: retryRootURL)
+        let workspaceStore = WorkspaceStore()
+        let panelStore = PanelStore(
+            rootNode: .leaf(surface: .session(sessionID: TerminalSession.ID()))
+        )
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider(),
+            workspaceRuntimeStore: workspaceRuntimeStore
+        )
+
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+        let retryWorkspaceID = try XCTUnwrap(workspaceStore.activeWorkspace?.id)
+        let restoredWorkspace = Workspace.make(id: UUID(), rootURL: retryRootURL)
+        await repository.setRestoredSnapshot(
+            WorkspaceSnapshot(
+                workspace: restoredWorkspace,
+                panelTree: restoredPanelTree,
+                leftRailState: LeftRailState(
+                    selectedWorkspaceID: restoredWorkspace.id,
+                    selectedPanelID: restoredPanelID,
+                    isFileTreeVisible: true
+                )
+            )
+        )
+
+        try await coordinator.openWorkspace(rootURL: secondRootURL)
+
+        let savedRetrySnapshot = await repository.savedSnapshot(for: retryRootURL)
+        XCTAssertNil(savedRetrySnapshot)
+        XCTAssertNil(workspaceRuntimeStore.state(for: retryWorkspaceID))
+
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+
+        let retryLoadCount = await repository.loadCount(for: retryRootURL)
+        XCTAssertEqual(retryLoadCount, 2)
+        XCTAssertEqual(workspaceStore.activeWorkspace?.id, restoredWorkspace.id)
+        XCTAssertEqual(
+            workspaceStore.workspaces
+                .filter { $0.rootURL.standardizedFileURL == retryRootURL.standardizedFileURL }
+                .map(\.id),
+            [restoredWorkspace.id]
+        )
+        XCTAssertEqual(panelStore.rootNode, restoredPanelTree)
+        XCTAssertEqual(panelStore.focusedPanelID, restoredPanelID)
+        XCTAssertNil(workspaceRuntimeStore.state(for: retryWorkspaceID))
+        XCTAssertEqual(workspaceRuntimeStore.state(for: restoredWorkspace.id)?.panelTree, restoredPanelTree)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorRetrySuccessMigratesFallbackRuntimeWithoutTerminatingLiveTerminal() async throws {
+        let retryRootURL = URL(fileURLWithPath: "/tmp/RetryRuntimeWorkspace")
+        let secondRootURL = URL(fileURLWithPath: "/tmp/RetryRuntimeSecondWorkspace")
+        let restoredPanelID = PanelNode.ID()
+        let restoredWorkspace = Workspace.make(id: UUID(), rootURL: retryRootURL)
+        let repository = RetryWorkspaceRepository(retryRootURL: retryRootURL)
+        let workspaceStore = WorkspaceStore()
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
+        let client = WorkspacePanelMockPTYClient(processID: 7341)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider(),
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceRuntimeStore: workspaceRuntimeStore
+        )
+        await repository.setRestoredSnapshot(
+            WorkspaceSnapshot(
+                workspace: restoredWorkspace,
+                panelTree: .leaf(id: restoredPanelID, surface: .empty),
+                leftRailState: LeftRailState(
+                    selectedWorkspaceID: restoredWorkspace.id,
+                    selectedPanelID: restoredPanelID,
+                    isFileTreeVisible: true
+                )
+            )
+        )
+
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+        let fallbackWorkspaceID = try XCTUnwrap(workspaceStore.activeWorkspace?.id)
+        try await coordinator.createTerminal(in: fallbackWorkspaceID)
+        let fallbackWorkspaceSession = try XCTUnwrap(
+            workspaceSession(from: panelStore.rootNode.surface, in: workspaceSessionStore)
+        )
+        guard case let .terminal(terminalID) = fallbackWorkspaceSession.content else {
+            XCTFail("Expected fallback terminal workspace session.")
+            return
+        }
+
+        try await coordinator.openWorkspace(rootURL: secondRootURL)
+
+        let savedRetrySnapshot = await repository.savedSnapshot(for: retryRootURL)
+        XCTAssertNil(savedRetrySnapshot)
+        XCTAssertEqual(workspaceRuntimeStore.state(for: fallbackWorkspaceID)?.panelTree.surface, .session(sessionID: fallbackWorkspaceSession.id))
+
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+
+        XCTAssertEqual(client.terminateCallCount, 0)
+        XCTAssertEqual(workspaceStore.activeWorkspace?.id, restoredWorkspace.id)
+        XCTAssertEqual(
+            workspaceStore.workspaces
+                .filter { $0.rootURL.standardizedFileURL == retryRootURL.standardizedFileURL }
+                .map(\.id),
+            [restoredWorkspace.id]
+        )
+        XCTAssertEqual(panelStore.rootNode.surface, .session(sessionID: fallbackWorkspaceSession.id))
+        XCTAssertNil(workspaceRuntimeStore.state(for: fallbackWorkspaceID))
+        XCTAssertEqual(workspaceRuntimeStore.state(for: restoredWorkspace.id)?.panelTree.surface, .session(sessionID: fallbackWorkspaceSession.id))
+        XCTAssertEqual(workspaceSessionStore.session(for: fallbackWorkspaceSession.id)?.workspaceID, restoredWorkspace.id)
+        XCTAssertEqual(workspaceSessionStore.snapshotSessions(in: fallbackWorkspaceID), [])
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.workspaceID, restoredWorkspace.id)
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.status, .running)
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.processID, 7341)
+        XCTAssertEqual(terminalSessionController.snapshotSessions(in: fallbackWorkspaceID), [])
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorRetryFailureRestoresParkedFallbackRuntime() async throws {
+        let retryRootURL = URL(fileURLWithPath: "/tmp/RetryFailureRuntimeWorkspace")
+        let secondRootURL = URL(fileURLWithPath: "/tmp/RetryFailureSecondWorkspace")
+        let repository = ThrowingLoadWorkspaceRepository()
+        let workspaceStore = WorkspaceStore()
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
+        let client = WorkspacePanelMockPTYClient(processID: 8012)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceRepository: repository,
+            gitBranchProvider: NoopGitBranchProvider(),
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceRuntimeStore: workspaceRuntimeStore
+        )
+
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+        let fallbackWorkspaceID = try XCTUnwrap(workspaceStore.activeWorkspace?.id)
+        try await coordinator.createTerminal(in: fallbackWorkspaceID)
+        let fallbackWorkspaceSession = try XCTUnwrap(
+            workspaceSession(from: panelStore.rootNode.surface, in: workspaceSessionStore)
+        )
+        guard case let .terminal(terminalID) = fallbackWorkspaceSession.content else {
+            XCTFail("Expected fallback terminal workspace session.")
+            return
+        }
+
+        try await coordinator.openWorkspace(rootURL: secondRootURL)
+        try await coordinator.openWorkspace(rootURL: retryRootURL)
+
+        XCTAssertEqual(client.terminateCallCount, 0)
+        XCTAssertEqual(workspaceStore.activeWorkspace?.id, fallbackWorkspaceID)
+        XCTAssertEqual(panelStore.rootNode.surface, .session(sessionID: fallbackWorkspaceSession.id))
+        XCTAssertEqual(workspaceRuntimeStore.state(for: fallbackWorkspaceID)?.panelTree.surface, .session(sessionID: fallbackWorkspaceSession.id))
+        XCTAssertEqual(workspaceSessionStore.session(for: fallbackWorkspaceSession.id)?.workspaceID, fallbackWorkspaceID)
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.workspaceID, fallbackWorkspaceID)
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.status, .running)
+        XCTAssertEqual(terminalSessionController.session(for: terminalID)?.processID, 8012)
     }
 
     @MainActor
@@ -1590,6 +1850,10 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceID: activeWorkspace.id,
             url: activeWorkspace.rootURL.appendingPathComponent("Draft.md")
         )
+        let remainingDocumentSession = DocumentSession.make(
+            workspaceID: remainingWorkspace.id,
+            url: remainingWorkspace.rootURL.appendingPathComponent("Notes.md")
+        )
         let previewState = PreviewState(
             id: PreviewState.ID(),
             sourceDocumentID: documentSession.id,
@@ -1613,13 +1877,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             previewSessionStore: previewSessionStore
         )
         documentSessionStore.upsertSession(documentSession)
+        documentSessionStore.upsertSession(remainingDocumentSession)
         try documentFileWatchStore.startWatching(documentID: documentSession.id, url: documentSession.url)
+        try documentFileWatchStore.startWatching(
+            documentID: remainingDocumentSession.id,
+            url: remainingDocumentSession.url
+        )
         documentTextStore.update(documentID: documentSession.id, text: "Draft", version: 1)
         previewSessionStore.upsertState(previewState, for: previewState.id)
         recentStore.noteOpened(activeWorkspace)
 
         await coordinator.closeWorkspace(id: activeWorkspace.id)
         watcher.emit(FileWatchEvent(scope: .openFile(documentSession.url), kind: .modified))
+        watcher.emit(FileWatchEvent(scope: .openFile(remainingDocumentSession.url), kind: .modified))
         await Task.yield()
 
         let savedSnapshot = await repository.savedSnapshot(for: activeWorkspace.rootURL)
@@ -1628,10 +1898,91 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(savedSnapshot?.documents, [documentSession])
         XCTAssertEqual(savedSnapshot?.previews, [previewState])
         XCTAssertNil(documentFileWatchStore.latestEvent(for: documentSession.id))
+        XCTAssertNotNil(documentFileWatchStore.latestEvent(for: remainingDocumentSession.id))
         XCTAssertNil(documentTextStore.snapshot(for: documentSession.id))
         XCTAssertEqual(workspaceStore.workspaces.map(\.id), [remainingWorkspace.id])
         XCTAssertEqual(workspaceStore.activeWorkspace?.id, remainingWorkspace.id)
         XCTAssertEqual(recentStore.recentWorkspaces.map(\.id), [activeWorkspace.id])
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCloseInactiveWorkspaceSavesParkedRuntimePanelTree() async throws {
+        let activeWorkspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/CloseInactiveActive"),
+            openedAt: Date(timeIntervalSince1970: 10)
+        )
+        let inactiveWorkspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/CloseInactiveTarget"),
+            openedAt: Date(timeIntervalSince1970: 20)
+        )
+        let activePanelID = PanelNode.ID()
+        let inactiveFirstPanelID = PanelNode.ID()
+        let inactiveSecondPanelID = PanelNode.ID()
+        let activePanelTree = PanelNode.leaf(id: activePanelID, surface: .empty)
+        let inactivePanelTree = PanelNode.split(
+            direction: .vertical,
+            first: .leaf(id: inactiveFirstPanelID, surface: .empty),
+            second: .leaf(id: inactiveSecondPanelID, surface: .empty)
+        )
+        let repository = InMemoryWorkspaceRepository()
+        let workspaceStore = WorkspaceStore(
+            activeWorkspace: activeWorkspace,
+            workspaces: [activeWorkspace, inactiveWorkspace]
+        )
+        let panelStore = PanelStore(rootNode: activePanelTree, focusedPanelID: activePanelID)
+        let documentSessionStore = DocumentSessionStore()
+        let watcher = ManualFileWatcher()
+        let documentFileWatchStore = DocumentFileWatchStore(fileWatcher: watcher)
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceRepository: repository,
+            documentSessionStore: documentSessionStore,
+            documentFileWatchStore: documentFileWatchStore,
+            workspaceRuntimeStore: workspaceRuntimeStore
+        )
+        let activeDocumentSession = DocumentSession.make(
+            workspaceID: activeWorkspace.id,
+            url: activeWorkspace.rootURL.appendingPathComponent("Active.md")
+        )
+        let inactiveDocumentSession = DocumentSession.make(
+            workspaceID: inactiveWorkspace.id,
+            url: inactiveWorkspace.rootURL.appendingPathComponent("Inactive.md")
+        )
+        documentSessionStore.upsertSession(activeDocumentSession)
+        documentSessionStore.upsertSession(inactiveDocumentSession)
+        try documentFileWatchStore.startWatching(
+            documentID: activeDocumentSession.id,
+            url: activeDocumentSession.url
+        )
+        try documentFileWatchStore.startWatching(
+            documentID: inactiveDocumentSession.id,
+            url: inactiveDocumentSession.url
+        )
+        workspaceRuntimeStore.park(
+            workspaceID: inactiveWorkspace.id,
+            panelTree: inactivePanelTree,
+            focusedPanelID: inactiveSecondPanelID
+        )
+
+        await coordinator.closeWorkspace(id: inactiveWorkspace.id)
+        watcher.emit(FileWatchEvent(scope: .openFile(activeDocumentSession.url), kind: .modified))
+        watcher.emit(FileWatchEvent(scope: .openFile(inactiveDocumentSession.url), kind: .modified))
+        await Task.yield()
+
+        let savedSnapshot = await repository.savedSnapshot(for: inactiveWorkspace.rootURL)
+        XCTAssertEqual(savedSnapshot?.workspaceID, inactiveWorkspace.id)
+        XCTAssertEqual(savedSnapshot?.panelTree, inactivePanelTree)
+        XCTAssertEqual(savedSnapshot?.leftRailState.selectedPanelID, inactiveSecondPanelID)
+        XCTAssertEqual(savedSnapshot?.documents, [inactiveDocumentSession])
+        XCTAssertNotNil(documentFileWatchStore.latestEvent(for: activeDocumentSession.id))
+        XCTAssertNil(documentFileWatchStore.latestEvent(for: inactiveDocumentSession.id))
+        XCTAssertEqual(panelStore.rootNode, activePanelTree)
+        XCTAssertEqual(workspaceStore.activeWorkspace?.id, activeWorkspace.id)
+        XCTAssertNil(workspaceRuntimeStore.state(for: inactiveWorkspace.id))
     }
 
     @MainActor
@@ -1931,6 +2282,53 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         }
 
         func saveSnapshot(_ snapshot: WorkspaceSnapshot, for rootURL: URL) async throws {}
+    }
+
+    private actor RetryWorkspaceRepository: WorkspaceRepository {
+        private let retryRootURL: URL
+        private var restoredSnapshot: WorkspaceSnapshot?
+        private var loadCountsByPath: [String: Int] = [:]
+        private var savedSnapshotsByPath: [String: WorkspaceSnapshot] = [:]
+
+        init(retryRootURL: URL) {
+            self.retryRootURL = retryRootURL
+        }
+
+        func loadSnapshot(for rootURL: URL) async throws -> WorkspaceSnapshot? {
+            guard rootURL.standardizedFileURL == retryRootURL.standardizedFileURL else {
+                return nil
+            }
+
+            let key = key(for: rootURL)
+            let loadCount = loadCountsByPath[key, default: 0] + 1
+            loadCountsByPath[key] = loadCount
+
+            if loadCount == 1 {
+                throw WorkspaceRepositoryTestError.loadFailed
+            }
+
+            return restoredSnapshot
+        }
+
+        func saveSnapshot(_ snapshot: WorkspaceSnapshot, for rootURL: URL) async throws {
+            savedSnapshotsByPath[key(for: rootURL)] = snapshot
+        }
+
+        func setRestoredSnapshot(_ snapshot: WorkspaceSnapshot) {
+            restoredSnapshot = snapshot
+        }
+
+        func loadCount(for rootURL: URL) -> Int {
+            loadCountsByPath[key(for: rootURL), default: 0]
+        }
+
+        func savedSnapshot(for rootURL: URL) -> WorkspaceSnapshot? {
+            savedSnapshotsByPath[key(for: rootURL)]
+        }
+
+        private func key(for rootURL: URL) -> String {
+            rootURL.standardizedFileURL.path
+        }
     }
 
     private struct ThrowingSaveWorkspaceRepository: WorkspaceRepository {

@@ -244,6 +244,21 @@ final class WorkspaceShellTests: XCTestCase {
         )
     }
 
+    func testWorkspaceFileOpenPolicyReplacesOnlyEmptyFocusedPanel() {
+        XCTAssertEqual(
+            WorkspaceFileOpenPolicy.command(focusedSurface: .empty),
+            .replaceFocused(.split)
+        )
+        XCTAssertEqual(
+            WorkspaceFileOpenPolicy.command(focusedSurface: .session(sessionID: WorkspaceSession.ID())),
+            .openInNewPanel(.split, .horizontal)
+        )
+        XCTAssertEqual(
+            WorkspaceFileOpenPolicy.command(focusedSurface: nil),
+            .openInNewPanel(.split, .horizontal)
+        )
+    }
+
     @MainActor
     func testLeftRailOpenWorkspaceCallbackCanBeInvoked() {
         var didOpenWorkspace = false

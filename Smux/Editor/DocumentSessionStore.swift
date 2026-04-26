@@ -27,7 +27,37 @@ final class DocumentSessionStore: ObservableObject, DocumentSessionStoring {
         sessions = Dictionary(uniqueKeysWithValues: restoredSessions.map { ($0.id, $0) })
     }
 
+    func replaceSessions(
+        in workspaceID: Workspace.ID,
+        with restoredSessions: [DocumentSession]
+    ) {
+        sessions = sessions.filter { $0.value.workspaceID != workspaceID }
+
+        for session in restoredSessions {
+            sessions[session.id] = session
+        }
+    }
+
+    func removeSessions(in workspaceID: Workspace.ID) {
+        sessions = sessions.filter { $0.value.workspaceID != workspaceID }
+    }
+
+    func moveSessions(from sourceWorkspaceID: Workspace.ID, to targetWorkspaceID: Workspace.ID) {
+        guard sourceWorkspaceID != targetWorkspaceID else {
+            return
+        }
+
+        for (sessionID, var session) in sessions where session.workspaceID == sourceWorkspaceID {
+            session.workspaceID = targetWorkspaceID
+            sessions[sessionID] = session
+        }
+    }
+
     func snapshotSessions() -> [DocumentSession] {
         Array(sessions.values)
+    }
+
+    func snapshotSessions(in workspaceID: Workspace.ID) -> [DocumentSession] {
+        sessions.values.filter { $0.workspaceID == workspaceID }
     }
 }

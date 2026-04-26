@@ -50,9 +50,51 @@ final class WorkspaceSessionStore: ObservableObject, WorkspaceSessionReading {
         orderedSessionIDs = restoredSessions.map(\.id)
     }
 
+    func replaceSessions(
+        in workspaceID: Workspace.ID,
+        with restoredSessions: [WorkspaceSession]
+    ) {
+        let removedIDs = Set(
+            sessions.values
+                .filter { $0.workspaceID == workspaceID }
+                .map(\.id)
+        )
+        sessions = sessions.filter { !removedIDs.contains($0.key) }
+        orderedSessionIDs.removeAll { removedIDs.contains($0) }
+
+        for session in restoredSessions {
+            upsertSession(session)
+        }
+    }
+
+    func removeSessions(in workspaceID: Workspace.ID) {
+        let removedIDs = Set(
+            sessions.values
+                .filter { $0.workspaceID == workspaceID }
+                .map(\.id)
+        )
+        sessions = sessions.filter { !removedIDs.contains($0.key) }
+        orderedSessionIDs.removeAll { removedIDs.contains($0) }
+    }
+
+    func moveSessions(from sourceWorkspaceID: Workspace.ID, to targetWorkspaceID: Workspace.ID) {
+        guard sourceWorkspaceID != targetWorkspaceID else {
+            return
+        }
+
+        for (sessionID, var session) in sessions where session.workspaceID == sourceWorkspaceID {
+            session.workspaceID = targetWorkspaceID
+            sessions[sessionID] = session
+        }
+    }
+
     func snapshotSessions() -> [WorkspaceSession] {
         let orderedSessions = orderedSessionIDs.compactMap { sessions[$0] }
         let orderedIDs = Set(orderedSessions.map(\.id))
         return orderedSessions + sessions.values.filter { !orderedIDs.contains($0.id) }
+    }
+
+    func snapshotSessions(in workspaceID: Workspace.ID) -> [WorkspaceSession] {
+        snapshotSessions().filter { $0.workspaceID == workspaceID }
     }
 }

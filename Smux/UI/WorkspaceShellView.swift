@@ -433,13 +433,18 @@ private extension WorkspaceShellView {
         case .directory:
             expandFileTreeNode(nodeID)
         case .file:
-            if panelStore.focusedSurface == .empty {
-                return
-            }
-
             Task { @MainActor in
                 do {
-                    try await commandRouter.openDocument(node.url, preferredSurface: .split)
+                    switch WorkspaceFileOpenPolicy.command(focusedSurface: panelStore.focusedSurface) {
+                    case .replaceFocused(let preferredSurface):
+                        try await commandRouter.openDocument(node.url, preferredSurface: preferredSurface)
+                    case .openInNewPanel(let preferredSurface, let splitDirection):
+                        try await commandRouter.openDocumentInNewPanel(
+                            node.url,
+                            preferredSurface: preferredSurface,
+                            splitDirection: splitDirection
+                        )
+                    }
                 } catch {
                     workspaceStore.openErrorMessage = "Failed to open document: \(error.localizedDescription)"
                 }
@@ -479,6 +484,21 @@ private extension WorkspaceShellView {
                 workspaceStore.openErrorMessage = "Failed to open document: \(error.localizedDescription)"
             }
         }
+    }
+}
+
+nonisolated enum WorkspaceSelectedFileOpenCommand: Equatable {
+    case replaceFocused(DocumentOpenMode)
+    case openInNewPanel(DocumentOpenMode, SplitDirection)
+}
+
+nonisolated enum WorkspaceFileOpenPolicy {
+    static func command(focusedSurface: PanelSurfaceDescriptor?) -> WorkspaceSelectedFileOpenCommand {
+        if focusedSurface == .empty {
+            return .replaceFocused(.split)
+        }
+
+        return .openInNewPanel(.split, .horizontal)
     }
 }
 

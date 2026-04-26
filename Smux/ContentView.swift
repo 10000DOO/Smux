@@ -63,6 +63,7 @@ private final class AppComposition: ObservableObject {
     let terminalOutputStore: TerminalOutputStore
     let terminalPreferencesStore: TerminalPreferencesStore
     let workspaceSessionStore: WorkspaceSessionStore
+    let workspaceRuntimeStore: WorkspaceRuntimeStore
     let agentStateStore: AgentStateStore
     let agentTerminalOutputMonitor: AgentTerminalOutputMonitor
     let recentWorkspaceStore: RecentWorkspaceStore
@@ -85,6 +86,7 @@ private final class AppComposition: ObservableObject {
         let terminalOutputStore = TerminalOutputStore()
         let terminalPreferencesStore = TerminalPreferencesStore()
         let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceRuntimeStore = WorkspaceRuntimeStore()
         let agentStateStore = AgentStateStore()
         let agentTerminalOutputMonitor = AgentTerminalOutputMonitor(
             stateStore: agentStateStore,
@@ -114,7 +116,8 @@ private final class AppComposition: ObservableObject {
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             previewSessionStore: previewSessionStore,
-            workspaceSessionStore: workspaceSessionStore
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceRuntimeStore: workspaceRuntimeStore
         )
 
         self.workspaceStore = workspaceStore
@@ -130,6 +133,7 @@ private final class AppComposition: ObservableObject {
         self.terminalOutputStore = terminalOutputStore
         self.terminalPreferencesStore = terminalPreferencesStore
         self.workspaceSessionStore = workspaceSessionStore
+        self.workspaceRuntimeStore = workspaceRuntimeStore
         self.agentStateStore = agentStateStore
         self.agentTerminalOutputMonitor = agentTerminalOutputMonitor
         self.recentWorkspaceStore = recentWorkspaceStore
@@ -280,6 +284,40 @@ final class PreviewSessionStore: ObservableObject {
         sourceDocumentIDs = Dictionary(uniqueKeysWithValues: normalizedStates.map { ($0.id, $0.sourceDocumentID) })
     }
 
+    func replaceStates(
+        forSourceDocumentIDs sourceDocumentIDs: Set<DocumentSession.ID>,
+        with restoredStates: [PreviewState]
+    ) {
+        let normalizedStates = restoredStates.map { state in
+            var normalizedState = state
+            normalizedState.zoom = PreviewState.clampedZoom(state.zoom)
+            return normalizedState
+        }
+        let removedPreviewIDs = Set(
+            self.sourceDocumentIDs
+                .filter { sourceDocumentIDs.contains($0.value) }
+                .map(\.key)
+        )
+
+        states = states.filter { !removedPreviewIDs.contains($0.key) }
+        self.sourceDocumentIDs = self.sourceDocumentIDs.filter { !removedPreviewIDs.contains($0.key) }
+
+        for state in normalizedStates {
+            states[state.id] = state
+            self.sourceDocumentIDs[state.id] = state.sourceDocumentID
+        }
+    }
+
+    func removeStates(forSourceDocumentIDs sourceDocumentIDs: Set<DocumentSession.ID>) {
+        let removedPreviewIDs = Set(
+            self.sourceDocumentIDs
+                .filter { sourceDocumentIDs.contains($0.value) }
+                .map(\.key)
+        )
+        states = states.filter { !removedPreviewIDs.contains($0.key) }
+        self.sourceDocumentIDs = self.sourceDocumentIDs.filter { !removedPreviewIDs.contains($0.key) }
+    }
+
     func snapshotStates() -> [PreviewState] {
         var snapshotStates = states
 
@@ -297,6 +335,10 @@ final class PreviewSessionStore: ObservableObject {
         }
 
         return Array(snapshotStates.values)
+    }
+
+    func snapshotStates(sourceDocumentIDs: Set<DocumentSession.ID>) -> [PreviewState] {
+        snapshotStates().filter { sourceDocumentIDs.contains($0.sourceDocumentID) }
     }
 }
 
@@ -319,6 +361,10 @@ final class DocumentTextStore: ObservableObject {
 
     func clearAll() {
         snapshots.removeAll()
+    }
+
+    func removeSnapshots(for documentIDs: Set<DocumentSession.ID>) {
+        snapshots = snapshots.filter { !documentIDs.contains($0.key) }
     }
 }
 
