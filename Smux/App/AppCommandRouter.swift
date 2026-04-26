@@ -31,6 +31,22 @@ struct AppCommandRouter {
         try await documentOpening.openDocument(url, preferredSurface: preferredSurface)
     }
 
+    func openDocumentInNewPanel(
+        _ url: URL,
+        preferredSurface: DocumentOpenMode,
+        splitDirection: SplitDirection
+    ) async throws {
+        guard let documentOpening else {
+            throw AppCommandRouterError.missingDocumentOpening
+        }
+
+        try await documentOpening.openDocumentInNewPanel(
+            url,
+            preferredSurface: preferredSurface,
+            splitDirection: splitDirection
+        )
+    }
+
     func createTerminal(in workspaceID: Workspace.ID) async throws {
         guard let terminalCommanding else {
             throw AppCommandRouterError.missingTerminalCommanding

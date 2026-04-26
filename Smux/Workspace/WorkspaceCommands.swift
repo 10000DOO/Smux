@@ -15,6 +15,11 @@ protocol WorkspaceOpening {
 @MainActor
 protocol DocumentOpening {
     func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws
+    func openDocumentInNewPanel(
+        _ url: URL,
+        preferredSurface: DocumentOpenMode,
+        splitDirection: SplitDirection
+    ) async throws
 }
 
 @MainActor

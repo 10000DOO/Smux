@@ -7,6 +7,18 @@ final class FileTreeStore: ObservableObject {
     @Published var selectedNodeID: FileTreeNode.ID?
     @Published var filterText = ""
 
+    var selectedDocumentCandidateURL: URL? {
+        guard let selectedNodeID,
+              let node = root?.node(id: selectedNodeID),
+              node.kind == .file,
+              node.isDocumentCandidate
+        else {
+            return nil
+        }
+
+        return node.url
+    }
+
     private let loader: FileTreeLoading
     private let watcher: FileWatching
     private let watchDebouncer: FileWatchDebouncer

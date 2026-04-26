@@ -66,6 +66,7 @@ struct WorkspaceShellView: View {
                 commandRouter: commandRouter,
                 activeWorkspaceID: workspaceStore.activeWorkspace?.id,
                 focusedPanelID: panelStore.focusedPanelID,
+                selectedDocumentURL: fileTreeStore.selectedDocumentCandidateURL,
                 onCommandError: { message in
                     workspaceStore.openErrorMessage = message
                 }
@@ -98,6 +99,7 @@ private struct WorkspaceCommandShortcutLayer: View {
     var commandRouter: AppCommandRouter
     var activeWorkspaceID: Workspace.ID?
     var focusedPanelID: PanelNode.ID?
+    var selectedDocumentURL: URL?
     var onCommandError: (String) -> Void
 
     var body: some View {
@@ -126,6 +128,16 @@ private struct WorkspaceCommandShortcutLayer: View {
                 createTerminal()
             }
             .keyboardShortcut("t", modifiers: [.command, .shift])
+
+            shortcutButton("Open Selected File in New Editor Panel") {
+                openSelectedDocumentInNewPanel(preferredSurface: .editor)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .option])
+
+            shortcutButton("Open Selected File in New Preview Panel") {
+                openSelectedDocumentInNewPanel(preferredSurface: .preview)
+            }
+            .keyboardShortcut("p", modifiers: [.command, .option])
         }
         .buttonStyle(.plain)
         .frame(width: 0, height: 0)
@@ -152,6 +164,25 @@ private struct WorkspaceCommandShortcutLayer: View {
                 }
             } catch {
                 onCommandError("Failed to create terminal: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func openSelectedDocumentInNewPanel(preferredSurface: DocumentOpenMode) {
+        guard let selectedDocumentURL else {
+            onCommandError("Select a Markdown or Mermaid file first.")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                try await commandRouter.openDocumentInNewPanel(
+                    selectedDocumentURL,
+                    preferredSurface: preferredSurface,
+                    splitDirection: .horizontal
+                )
+            } catch {
+                onCommandError("Failed to open document: \(error.localizedDescription)")
             }
         }
     }

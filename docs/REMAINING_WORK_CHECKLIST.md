@@ -19,6 +19,8 @@ Last updated: 2026-04-26
 - 열린 문서 file watching, 외부 변경 감지, dirty conflict 보존, clean reload와 preview refresh가 구현됨.
 - Markdown preview pipeline, editor-preview sync, heading anchors, internal anchor policy가 구현됨.
 - Markdown preview code block syntax highlighting이 offline HTML span/CSS 기반으로 구현됨.
+- 선택된 Markdown/Mermaid 파일을 `Command+Option+E/P`로 새 editor/preview panel에 여는
+  keyboard action이 구현됨.
 - 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
   WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
@@ -47,7 +49,7 @@ Last updated: 2026-04-26
 | P0-5 | performance/memory measurement | Implemented and verified |
 | P1-1 | editor Markdown syntax highlight | Implemented and verified |
 | P1-2 | preview code syntax highlight | Implemented and verified |
-| P1-3 | keyboard actions for new editor/preview panels | Terminal/split/focus shortcuts done, editor/preview shortcuts missing |
+| P1-3 | keyboard actions for new editor/preview panels | Implemented and verified |
 | P1-4 | vertical tab status/last notification polish | Basic rail/badges done, richer status missing |
 | P1-5 | cmux/hook parity for agent detection | Terminal output detection done, hook adapter missing |
 | P1-6 | Mermaid zoom/pan controls | Preview zoom model exists, diagram pan UI missing |
@@ -136,8 +138,8 @@ Suggested write set:
 
 - [x] Editor Markdown syntax highlight in `MarkdownEditorRepresentable`.
 - [x] Preview code block syntax highlighting without network dependency.
-- [ ] Keyboard action to open a new editor panel for selected Markdown/Mermaid file.
-- [ ] Keyboard action to open a new preview panel for selected Markdown/Mermaid file.
+- [x] Keyboard action to open a new editor panel for selected Markdown/Mermaid file.
+- [x] Keyboard action to open a new preview panel for selected Markdown/Mermaid file.
 - [ ] Richer left rail status for agent waiting/completed/failed and latest notification.
 - [ ] Agent hook adapter for Codex/Claude-like structured events.
 - [ ] Mermaid zoom/pan controls and persisted preview zoom state.
@@ -155,11 +157,11 @@ The next work should run in slices. Parallel work is allowed only when write set
 
 ### Current Best Sequence
 
-1. P0-2 panel splitter ratio UI.
-2. P0-3 terminal compatibility improvements.
-3. P0-5 performance baseline.
-4. P1 editor/preview keyboard actions.
-5. P1 syntax highlighting.
+1. P1 vertical tab status/last notification polish.
+2. P1 agent hook adapter for structured events.
+3. P1 Mermaid zoom/pan controls.
+4. P2 external link opening policy UI.
+5. P2 terminal font/theme settings.
 
 ### Safe Parallel Groups
 
@@ -197,6 +199,7 @@ editor/preview UI changes.
 - [x] Workspace switch/close watcher and document text snapshot cleanup.
 - [x] Markdown preview pipeline.
 - [x] Preview code block syntax highlighting.
+- [x] Keyboard actions for selected Markdown/Mermaid file editor/preview panels.
 - [x] Heading anchors and internal anchor navigation policy.
 - [x] Offline bundled official Mermaid renderer resource.
 - [x] Representative Mermaid fixture and offline preview HTML assertions.

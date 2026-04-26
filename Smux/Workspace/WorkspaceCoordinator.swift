@@ -124,32 +124,42 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
-        guard let workspace = workspaceStore?.activeWorkspace else {
-            throw WorkspaceCoordinatorError.missingActiveWorkspace
-        }
-
-        let documentID = DocumentSession.ID()
-        let session = DocumentSession.make(
-            id: documentID,
-            workspaceID: workspace.id,
-            url: url
-        )
-        documentSessionStore?.upsertSession(session)
+        let documentID = try createDocumentSession(for: url)
 
         switch preferredSurface {
         case .editor:
             panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
         case .preview:
-            let previewID = PreviewState.ID()
-            previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
-            panelStore?.replaceFocusedPanel(with: .preview(previewID: previewID))
+            panelStore?.replaceFocusedPanel(with: createPreviewSurface(sourceDocumentID: documentID))
         case .split:
-            let previewID = PreviewState.ID()
-            previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
             panelStore?.replaceFocusedPanel(with: .editor(documentID: documentID))
             panelStore?.splitFocusedPanel(
                 direction: .horizontal,
-                surface: .preview(previewID: previewID)
+                surface: createPreviewSurface(sourceDocumentID: documentID)
+            )
+        }
+    }
+
+    func openDocumentInNewPanel(
+        _ url: URL,
+        preferredSurface: DocumentOpenMode,
+        splitDirection: SplitDirection
+    ) async throws {
+        let documentID = try createDocumentSession(for: url)
+
+        switch preferredSurface {
+        case .editor:
+            panelStore?.splitFocusedPanel(direction: splitDirection, surface: .editor(documentID: documentID))
+        case .preview:
+            panelStore?.splitFocusedPanel(
+                direction: splitDirection,
+                surface: createPreviewSurface(sourceDocumentID: documentID)
+            )
+        case .split:
+            panelStore?.splitFocusedPanel(direction: splitDirection, surface: .editor(documentID: documentID))
+            panelStore?.splitFocusedPanel(
+                direction: .horizontal,
+                surface: createPreviewSurface(sourceDocumentID: documentID)
             )
         }
     }
@@ -205,6 +215,28 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         case .noBranch, .lookupFailed:
             return nil
         }
+    }
+
+    private func createDocumentSession(for url: URL) throws -> DocumentSession.ID {
+        guard let workspace = workspaceStore?.activeWorkspace else {
+            throw WorkspaceCoordinatorError.missingActiveWorkspace
+        }
+
+        let documentID = DocumentSession.ID()
+        let session = DocumentSession.make(
+            id: documentID,
+            workspaceID: workspace.id,
+            url: url
+        )
+        documentSessionStore?.upsertSession(session)
+
+        return documentID
+    }
+
+    private func createPreviewSurface(sourceDocumentID documentID: DocumentSession.ID) -> PanelSurfaceDescriptor {
+        let previewID = PreviewState.ID()
+        previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
+        return .preview(previewID: previewID)
     }
 
     private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {

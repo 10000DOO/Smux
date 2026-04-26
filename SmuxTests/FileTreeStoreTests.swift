@@ -31,6 +31,31 @@ final class FileTreeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedDocumentCandidateURLReturnsOnlySelectedMarkdownOrMermaidFile() async throws {
+        let rootURL = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try writeFile(named: "README.md", in: rootURL)
+        try writeFile(named: "plain.txt", in: rootURL)
+
+        let store = FileTreeStore()
+        try await store.loadRoot(rootURL: rootURL)
+
+        let root = try XCTUnwrap(store.root)
+        let markdownNode = try XCTUnwrap(child(named: "README.md", in: root))
+        let plainTextNode = try XCTUnwrap(child(named: "plain.txt", in: root))
+
+        store.selectedNodeID = markdownNode.id
+        XCTAssertEqual(store.selectedDocumentCandidateURL, markdownNode.url)
+
+        store.selectedNodeID = plainTextNode.id
+        XCTAssertNil(store.selectedDocumentCandidateURL)
+
+        store.selectedNodeID = root.id
+        XCTAssertNil(store.selectedDocumentCandidateURL)
+    }
+
+    @MainActor
     func testChildrenSortDirectoriesBeforeFilesThenByLocalizedName() async throws {
         let rootURL = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: rootURL) }

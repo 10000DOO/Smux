@@ -820,6 +820,78 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorOpenDocumentInNewEditorPanelSplitsFocusedPanel() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/NewEditorPanelWorkspace")
+        )
+        let documentURL = workspace.rootURL.appendingPathComponent("README.md")
+        let existingPanelID = PanelNode.ID()
+        let workspaceStore = WorkspaceStore(activeWorkspace: workspace)
+        let panelStore = PanelStore(rootNode: .leaf(id: existingPanelID, surface: .empty))
+        let documentSessionStore = DocumentSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            documentSessionStore: documentSessionStore
+        )
+
+        try await coordinator.openDocumentInNewPanel(
+            documentURL,
+            preferredSurface: .editor,
+            splitDirection: .horizontal
+        )
+
+        XCTAssertEqual(panelStore.rootNode.direction, .horizontal)
+        XCTAssertEqual(panelStore.rootNode.children.first?.id, existingPanelID)
+
+        guard case let .editor(documentID) = panelStore.rootNode.children.last?.surface else {
+            XCTFail("Expected a new editor panel.")
+            return
+        }
+
+        XCTAssertEqual(panelStore.focusedPanelID, panelStore.rootNode.children.last?.id)
+        let session = documentSessionStore.session(for: documentID)
+        XCTAssertEqual(session?.workspaceID, workspace.id)
+        XCTAssertEqual(session?.url, documentURL)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorOpenDocumentInNewPreviewPanelBindsPreviewToDocument() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/NewPreviewPanelWorkspace")
+        )
+        let documentURL = workspace.rootURL.appendingPathComponent("diagram.mmd")
+        let workspaceStore = WorkspaceStore(activeWorkspace: workspace)
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let documentSessionStore = DocumentSessionStore()
+        let previewSessionStore = PreviewSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            documentSessionStore: documentSessionStore,
+            previewSessionStore: previewSessionStore
+        )
+
+        try await coordinator.openDocumentInNewPanel(
+            documentURL,
+            preferredSurface: .preview,
+            splitDirection: .horizontal
+        )
+
+        guard case let .preview(previewID) = panelStore.rootNode.children.last?.surface,
+              let documentID = previewSessionStore.sourceDocumentID(for: previewID)
+        else {
+            XCTFail("Expected a new preview panel bound to a document.")
+            return
+        }
+
+        XCTAssertEqual(panelStore.focusedPanelID, panelStore.rootNode.children.last?.id)
+        XCTAssertEqual(documentSessionStore.session(for: documentID)?.url, documentURL)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorCreateTerminalStartsControllerSessionAndUsesReturnedID() async throws {
         let workspace = Workspace.make(
             id: UUID(),
@@ -1037,6 +1109,11 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         try await router.openWorkspace(rootURL: rootURL)
         try await router.closeWorkspace(id: closedWorkspaceID)
         try await router.openDocument(documentURL, preferredSurface: .split)
+        try await router.openDocumentInNewPanel(
+            documentURL,
+            preferredSurface: .preview,
+            splitDirection: .horizontal
+        )
         try await router.createTerminal(in: workspaceID)
         try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
         router.splitFocusedPanel(direction: .vertical, surface: splitSurface)
@@ -1046,7 +1123,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(handler.openedRootURL, rootURL)
         XCTAssertEqual(handler.closedWorkspaceID, closedWorkspaceID)
         XCTAssertEqual(handler.openedDocumentURL, documentURL)
-        XCTAssertEqual(handler.openedDocumentMode, .split)
+        XCTAssertEqual(handler.openedDocumentModes, [.split, .preview])
+        XCTAssertEqual(handler.openedDocumentSplitDirection, .horizontal)
         XCTAssertEqual(handler.terminalWorkspaceID, workspaceID)
         XCTAssertEqual(handler.terminalPanelID, panelID)
         XCTAssertEqual(handler.splitDirection, .vertical)
@@ -1081,6 +1159,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         do {
             try await router.openDocument(documentURL, preferredSurface: .editor)
+            XCTFail("Expected missing document handler error.")
+        } catch let error as AppCommandRouterError {
+            XCTAssertEqual(error, .missingDocumentOpening)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        do {
+            try await router.openDocumentInNewPanel(
+                documentURL,
+                preferredSurface: .preview,
+                splitDirection: .horizontal
+            )
             XCTFail("Expected missing document handler error.")
         } catch let error as AppCommandRouterError {
             XCTAssertEqual(error, .missingDocumentOpening)
@@ -1205,7 +1296,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var openedRootURL: URL?
         var closedWorkspaceID: Workspace.ID?
         var openedDocumentURL: URL?
-        var openedDocumentMode: DocumentOpenMode?
+        var openedDocumentModes: [DocumentOpenMode] = []
+        var openedDocumentSplitDirection: SplitDirection?
         var terminalWorkspaceID: Workspace.ID?
         var terminalPanelID: PanelNode.ID?
         var splitDirection: SplitDirection?
@@ -1223,7 +1315,17 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         func openDocument(_ url: URL, preferredSurface: DocumentOpenMode) async throws {
             openedDocumentURL = url
-            openedDocumentMode = preferredSurface
+            openedDocumentModes.append(preferredSurface)
+        }
+
+        func openDocumentInNewPanel(
+            _ url: URL,
+            preferredSurface: DocumentOpenMode,
+            splitDirection: SplitDirection
+        ) async throws {
+            openedDocumentURL = url
+            openedDocumentModes.append(preferredSurface)
+            openedDocumentSplitDirection = splitDirection
         }
 
         func createTerminal(in workspaceID: Workspace.ID) async throws {
