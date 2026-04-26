@@ -360,6 +360,8 @@ private extension PanelNode {
     }
 }
 
+#if DEBUG
 #Preview {
     ContentView()
 }
+#endif

@@ -32,6 +32,7 @@ Last updated: 2026-04-26
 - Terminal theme controls, terminal font size controls, persisted terminal preferences, and
   font-size-aware terminal resize estimation are implemented.
 - A keyboard action for activating the most recent visible workspace notification is implemented.
+- A local release archive/notarization script and distribution checklist are implemented.
 - 공식 Mermaid `mermaid.min.js` 번들 기반 offline WebView rendering 연결, 대표 fixture 검증,
   WebView-level offline SVG render 검증이 구현됨.
 - Notification read model, routing policy, macOS notification adapter, terminal output 기반
@@ -67,7 +68,8 @@ Last updated: 2026-04-26
 | P2-1 | external link opening policy UI | Implemented and verified |
 | P2-2 | terminal theme/font settings | Implemented and verified |
 | P2-3 | most recent notification keyboard action | Implemented and verified |
-| Future | notarization/release automation/open-source prep | Deferred by PRD |
+| P2-4 | release archive/notarization automation | Implemented and verified |
+| Future | open-source launch prep | Requires license/positioning decision |
 
 ## P0 Checklist
 
@@ -161,7 +163,7 @@ Suggested write set:
 - [x] User-controllable external link open policy.
 - [x] Terminal font/theme settings.
 - [x] Most recent notification keyboard action.
-- [ ] Release/notarization automation after feature completion.
+- [x] Release/notarization automation after feature completion.
 
 ## Parallelization Plan
 
@@ -169,7 +171,7 @@ The next work should run in slices. Parallel work is allowed only when write set
 
 ### Current Best Sequence
 
-1. Release/notarization automation after feature completion.
+1. Open-source launch prep after license and public positioning decisions.
 
 ### Safe Parallel Groups
 
@@ -221,3 +223,4 @@ editor/preview UI changes.
 - [x] Preview external link policy UI and persisted preference.
 - [x] Terminal theme/font controls and persisted terminal preferences.
 - [x] Most recent notification keyboard action.
+- [x] Local release archive/notarization script and distribution checklist.
