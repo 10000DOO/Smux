@@ -3,13 +3,14 @@ import XCTest
 
 final class PerformanceBaselineTests: XCTestCase {
     func testLargeMarkdownPreviewRenderPerformance() {
-        let markdown = Self.makeLargeMarkdownDocument(sectionCount: 300, mermaidBlockCount: 24)
+        let markdown = Self.makeLargeMarkdownDocument(sectionCount: 300, mermaidBlockCount: 24, codeBlockCount: 24)
         let renderer = BasicMarkdownPreviewRenderer()
         let warmup = renderer.render(markdown)
 
         XCTAssertTrue(warmup.errors.isEmpty)
         XCTAssertEqual(warmup.mermaidBlocks.count, 24)
         XCTAssertGreaterThan(warmup.sanitizedMarkdown.html.count, 80_000)
+        XCTAssertTrue(warmup.sanitizedMarkdown.html.contains("code-token--keyword"))
 
         let options = XCTMeasureOptions()
         options.iterationCount = 5
@@ -20,6 +21,7 @@ final class PerformanceBaselineTests: XCTestCase {
             XCTAssertTrue(result.errors.isEmpty)
             XCTAssertEqual(result.mermaidBlocks.count, 24)
             XCTAssertGreaterThan(result.sanitizedMarkdown.html.count, 80_000)
+            XCTAssertTrue(result.sanitizedMarkdown.html.contains("code-token--keyword"))
         }
     }
 
@@ -45,9 +47,9 @@ final class PerformanceBaselineTests: XCTestCase {
         }
     }
 
-    private static func makeLargeMarkdownDocument(sectionCount: Int, mermaidBlockCount: Int) -> String {
+    private static func makeLargeMarkdownDocument(sectionCount: Int, mermaidBlockCount: Int, codeBlockCount: Int) -> String {
         var blocks: [String] = ["# Performance Baseline"]
-        blocks.reserveCapacity(sectionCount + mermaidBlockCount + 1)
+        blocks.reserveCapacity(sectionCount + mermaidBlockCount + codeBlockCount + 1)
 
         for index in 0..<sectionCount {
             blocks.append(
@@ -77,9 +79,27 @@ final class PerformanceBaselineTests: XCTestCase {
                     """
                 )
             }
+
+            if index < codeBlockCount {
+                blocks.append(Self.makeSwiftCodeBlock(index: index, lineCount: 16))
+            }
         }
 
         return blocks.joined(separator: "\n\n")
+    }
+
+    private static func makeSwiftCodeBlock(index: Int, lineCount: Int) -> String {
+        let lines = (0..<lineCount).map { lineIndex in
+            "let value\(index)_\(lineIndex) = \"section-\(index)-line-\(lineIndex)\""
+        }.joined(separator: "\n")
+
+        return """
+        ```swift
+        // preview syntax highlight path \(index)
+        \(lines)
+        if value\(index)_0.isEmpty { return }
+        ```
+        """
     }
 
     private static func makeTerminalOutputChunks(chunkCount: Int, linesPerChunk: Int) -> [String] {

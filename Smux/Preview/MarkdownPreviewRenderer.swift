@@ -97,11 +97,16 @@ private nonisolated struct MarkdownHTMLRenderer {
             )
         }
 
+        let code = codeLines.joined(separator: "\n")
+        let highlightedCode = MarkdownCodeSyntaxHighlighter.highlightedHTML(
+            for: code,
+            language: fence.language
+        )
         let languageAttributes = fence.language.map { language -> String in
             let escapedLanguage = escapeAttribute(language)
             return " class=\"language-\(escapedLanguage)\" data-language=\"\(escapedLanguage)\""
         } ?? ""
-        html.append("<pre><code\(languageAttributes)>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>")
+        html.append("<pre><code\(languageAttributes)>\(highlightedCode)</code></pre>")
     }
 
     private mutating func renderMermaidPlaceholder(source: String, sourceRange: SourceRange, didClose: Bool) {

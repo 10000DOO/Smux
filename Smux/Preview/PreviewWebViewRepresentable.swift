@@ -200,6 +200,13 @@ nonisolated enum PreviewWebViewHTMLBuilder {
             --accent: #0f766e;
             --danger: #b42318;
             --code: #f6f8fa;
+            --syntax-comment: #6b7280;
+            --syntax-keyword: #8250df;
+            --syntax-literal: #0550ae;
+            --syntax-number: #116329;
+            --syntax-property: #953800;
+            --syntax-string: #0a7c72;
+            --syntax-variable: #9a6700;
         }
 
         @media (prefers-color-scheme: dark) {
@@ -213,6 +220,13 @@ nonisolated enum PreviewWebViewHTMLBuilder {
                 --accent: #5eead4;
                 --danger: #f97066;
                 --code: #111418;
+                --syntax-comment: #8b949e;
+                --syntax-keyword: #d2a8ff;
+                --syntax-literal: #79c0ff;
+                --syntax-number: #7ee787;
+                --syntax-property: #ffa657;
+                --syntax-string: #a5d6ff;
+                --syntax-variable: #f2cc60;
             }
         }
 
@@ -286,6 +300,35 @@ nonisolated enum PreviewWebViewHTMLBuilder {
         code {
             font-family: "SF Mono", Menlo, Consolas, monospace;
             font-size: 0.92em;
+        }
+
+        .code-token--comment {
+            color: var(--syntax-comment);
+        }
+
+        .code-token--keyword {
+            color: var(--syntax-keyword);
+            font-weight: 600;
+        }
+
+        .code-token--literal {
+            color: var(--syntax-literal);
+        }
+
+        .code-token--number {
+            color: var(--syntax-number);
+        }
+
+        .code-token--property {
+            color: var(--syntax-property);
+        }
+
+        .code-token--string {
+            color: var(--syntax-string);
+        }
+
+        .code-token--variable {
+            color: var(--syntax-variable);
         }
 
         .preview-empty,

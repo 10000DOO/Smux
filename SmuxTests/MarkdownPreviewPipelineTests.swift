@@ -56,7 +56,37 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertTrue(html.contains("<th>Name</th>"))
         XCTAssertTrue(html.contains("<td>&lt;safe&gt;</td>"))
         XCTAssertTrue(html.contains("<pre><code class=\"language-swift\" data-language=\"swift\">"))
-        XCTAssertTrue(html.contains("let tag = &quot;&lt;main&gt;&quot;"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--keyword\">let</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--string\">&quot;&lt;main&gt;&quot;</span>"))
+    }
+
+    func testHighlightsFencedCodeBlocksWithoutExternalDependency() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let markdown = """
+        ```swift
+        // greet
+        let tag = "<main>"
+        if tag.isEmpty { return }
+        ```
+
+        ```json
+        {"name": "Smux", "enabled": true, "delta": -42}
+        ```
+        """
+
+        let state = try await pipeline.render(documentID: DocumentSession.ID(), text: markdown, version: 1)
+        let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--comment\">// greet</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--keyword\">let</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--keyword\">if</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--keyword\">return</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--string\">&quot;&lt;main&gt;&quot;</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--property\">&quot;name&quot;</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--literal\">true</span>"))
+        XCTAssertTrue(html.contains("<span class=\"code-token code-token--number\">-42</span>"))
+        XCTAssertFalse(html.contains("<script"))
     }
 
     func testGeneratesStableGitHubStyleHeadingAnchorsAndInternalLinks() async throws {
