@@ -389,21 +389,7 @@ private extension WorkspaceShellView {
     }
 
     func createSession() {
-        guard let workspaceID = workspaceStore.activeWorkspace?.id else {
-            workspaceStore.openErrorMessage = "No workspace is currently active."
-            return
-        }
-
-        Task { @MainActor in
-            do {
-                _ = try await commandRouter.createSession(
-                    WorkspaceSessionCreateRequest(workspaceID: workspaceID, kind: .terminal),
-                    attachment: .automatic(replacingPanelID: panelStore.focusedPanelID)
-                )
-            } catch {
-                workspaceStore.openErrorMessage = "Failed to create session: \(error.localizedDescription)"
-            }
-        }
+        WorkspaceShellSessionStartPolicy.command().perform(using: commandRouter)
     }
 
     func closeSession(id sessionID: WorkspaceSession.ID) {
@@ -526,6 +512,26 @@ private extension WorkspaceShellView {
 nonisolated enum WorkspaceSelectedFileOpenCommand: Equatable {
     case replaceFocused(DocumentOpenMode)
     case openInNewPanel(DocumentOpenMode, SplitDirection)
+}
+
+nonisolated enum WorkspaceShellSessionStartCommand: Equatable {
+    case createPanel(SplitDirection, PanelSurfaceDescriptor)
+}
+
+@MainActor
+extension WorkspaceShellSessionStartCommand {
+    func perform(using commandRouter: AppCommandRouter) {
+        switch self {
+        case .createPanel(let splitDirection, let surface):
+            commandRouter.createPanel(splitDirection: splitDirection, surface: surface)
+        }
+    }
+}
+
+nonisolated enum WorkspaceShellSessionStartPolicy {
+    static func command() -> WorkspaceShellSessionStartCommand {
+        .createPanel(.horizontal, .empty)
+    }
 }
 
 nonisolated enum WorkspaceFileOpenPolicy {

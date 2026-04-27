@@ -437,6 +437,24 @@ final class WorkspaceShellTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceShellSessionStartPolicyCreatesEmptyPanelCommand() {
+        let recorder = WorkspaceShellPanelCommandRecorder()
+        let router = AppCommandRouter(
+            workspaceOpening: nil,
+            documentOpening: nil,
+            terminalCommanding: nil,
+            workspaceSessionCreating: nil,
+            workspaceSessionCommanding: nil,
+            panelCommanding: recorder
+        )
+
+        WorkspaceShellSessionStartPolicy.command().perform(using: router)
+
+        XCTAssertEqual(recorder.createdPanelDirection, .horizontal)
+        XCTAssertEqual(recorder.createdPanelSurface, .empty)
+    }
+
+    @MainActor
     func testLeftRailOpenWorkspaceCallbackCanBeInvoked() {
         var didOpenWorkspace = false
         let view = LeftRailView(onOpenWorkspace: {
@@ -601,4 +619,29 @@ final class WorkspaceShellTests: XCTestCase {
             acknowledgedAt: acknowledgedAt
         )
     }
+}
+
+@MainActor
+private final class WorkspaceShellPanelCommandRecorder: PanelCommanding {
+    var createdPanelDirection: SplitDirection?
+    var createdPanelSurface: PanelSurfaceDescriptor?
+
+    func focus(panelID: PanelNode.ID?) {}
+
+    func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
+        createdPanelDirection = splitDirection
+        createdPanelSurface = surface
+    }
+
+    func splitPanel(panelID: PanelNode.ID, direction: SplitDirection, surface: PanelSurfaceDescriptor) {}
+
+    func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {}
+
+    func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {}
+
+    func focusNextPanel() {}
+
+    func focusPreviousPanel() {}
+
+    func closeFocusedPanel() {}
 }
