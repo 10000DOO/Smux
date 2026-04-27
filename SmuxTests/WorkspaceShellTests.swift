@@ -53,9 +53,28 @@ final class WorkspaceShellTests: XCTestCase {
     func testPanelSurfacePresentationForEmptySurface() {
         let presentation = PanelSurfacePresentation(surface: .empty)
 
-        XCTAssertEqual(presentation.title, "Workspace")
-        XCTAssertEqual(presentation.systemImage, "rectangle.split.3x1")
-        XCTAssertEqual(presentation.accessibilityLabel, "Workspace panel surface")
+        XCTAssertEqual(presentation.title, "New Panel")
+        XCTAssertEqual(presentation.systemImage, "plus.square")
+        XCTAssertEqual(presentation.accessibilityLabel, "New Panel surface")
+    }
+
+    func testPanelStartSurfacePrimaryOptionsPrioritizeContentChoices() {
+        let options = PanelStartSurfaceOptionPresentation.primaryOptions(
+            hasSelectedDocument: true
+        )
+
+        XCTAssertEqual(options.map(\.destination), [.terminal, .editor, .preview])
+        XCTAssertEqual(options.map(\.title), ["Terminal", "Editor", "Preview"])
+        XCTAssertEqual(options.map(\.isEnabled), [true, true, true])
+    }
+
+    func testPanelStartSurfaceDocumentChoicesRequireSelectedDocument() {
+        let options = PanelStartSurfaceOptionPresentation.primaryOptions(
+            hasSelectedDocument: false
+        )
+
+        XCTAssertEqual(options.map(\.destination), [.terminal, .editor, .preview])
+        XCTAssertEqual(options.map(\.isEnabled), [true, false, false])
     }
 
     func testPanelNodeLeafSummariesPreserveTreeOrderAndFocus() {
@@ -115,6 +134,50 @@ final class WorkspaceShellTests: XCTestCase {
                 notifications: notifications
             ),
             2
+        )
+    }
+
+    func testPanelNotificationBadgeSummaryCountsWorkspaceSessionBadges() {
+        let workspaceID = Workspace.ID()
+        let sessionID = WorkspaceSession.ID()
+        let otherSessionID = WorkspaceSession.ID()
+        let recycledPanelID = PanelNode.ID()
+        let notifications = [
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: recycledPanelID,
+                workspaceSessionID: sessionID,
+                shouldBadgePanel: true
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: recycledPanelID,
+                workspaceSessionID: otherSessionID,
+                shouldBadgePanel: true
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: recycledPanelID,
+                workspaceSessionID: sessionID,
+                shouldBadgePanel: true,
+                acknowledgedAt: Date(timeIntervalSince1970: 1)
+            )
+        ]
+
+        XCTAssertEqual(
+            PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
+                forWorkspaceSession: sessionID,
+                notifications: notifications
+            ),
+            1
+        )
+        XCTAssertEqual(
+            PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
+                for: .session(sessionID: sessionID),
+                panelID: recycledPanelID,
+                notifications: notifications
+            ),
+            1
         )
     }
 
@@ -183,6 +246,120 @@ final class WorkspaceShellTests: XCTestCase {
         XCTAssertEqual(presentation.latestNotificationMessage, "Needs attention")
         XCTAssertEqual(presentation.badgeCount, 2)
         XCTAssertTrue(presentation.isFocused)
+    }
+
+    func testLeftRailSessionPresentationUsesSessionNotifications() {
+        let panelID = PanelNode.ID()
+        let workspaceID = Workspace.ID()
+        let workspace = Workspace.make(
+            id: workspaceID,
+            rootURL: URL(fileURLWithPath: "/tmp/SessionWorkspace"),
+            gitBranch: "feature/sessions"
+        )
+        let session = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let notifications = [
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                workspaceSessionID: session.id,
+                shouldBadgePanel: true,
+                message: "Older",
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                workspaceSessionID: session.id,
+                shouldBadgePanel: true,
+                message: "Needs input",
+                createdAt: Date(timeIntervalSince1970: 3)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                workspaceSessionID: WorkspaceSession.ID(),
+                shouldBadgePanel: true,
+                message: "Reused panel stale badge",
+                createdAt: Date(timeIntervalSince1970: 4)
+            )
+        ]
+
+        let presentation = LeftRailSessionPresentation(
+            session: session,
+            visiblePanelID: panelID,
+            focusedPanelID: panelID,
+            workspace: workspace,
+            notifications: notifications
+        )
+
+        XCTAssertEqual(presentation.id, session.id)
+        XCTAssertEqual(presentation.title, "Terminal")
+        XCTAssertEqual(presentation.systemImage, "terminal")
+        XCTAssertEqual(presentation.metadataText, "feature/sessions - SessionWorkspace")
+        XCTAssertEqual(presentation.latestNotificationMessage, "Needs input")
+        XCTAssertEqual(presentation.badgeCount, 2)
+        XCTAssertTrue(presentation.isFocused)
+    }
+
+    func testLeftRailSessionPresentationPreservesHiddenSessionNotifications() {
+        let workspaceID = Workspace.ID()
+        let session = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let presentation = LeftRailSessionPresentation(
+            session: session,
+            visiblePanelID: nil,
+            focusedPanelID: PanelNode.ID(),
+            workspace: Workspace.make(id: workspaceID, rootURL: URL(fileURLWithPath: "/tmp/HiddenSessionWorkspace")),
+            notifications: [
+                workspaceNotification(
+                    workspaceID: workspaceID,
+                    panelID: PanelNode.ID(),
+                    workspaceSessionID: session.id,
+                    shouldBadgePanel: true,
+                    message: "Hidden session still needs input"
+                )
+            ]
+        )
+
+        XCTAssertEqual(presentation.id, session.id)
+        XCTAssertEqual(presentation.latestNotificationMessage, "Hidden session still needs input")
+        XCTAssertEqual(presentation.badgeCount, 1)
+        XCTAssertFalse(presentation.isFocused)
+    }
+
+    func testLeftRailSessionPresentationDoesNotFocusHiddenSessionWhenFocusIsNil() {
+        let workspaceID = Workspace.ID()
+        let session = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let presentation = LeftRailSessionPresentation(
+            session: session,
+            visiblePanelID: nil,
+            focusedPanelID: nil,
+            workspace: Workspace.make(id: workspaceID, rootURL: URL(fileURLWithPath: "/tmp/HiddenSessionWorkspace")),
+            notifications: []
+        )
+
+        XCTAssertFalse(presentation.isFocused)
     }
 
     func testWorkspaceShellNotificationFilterScopesRailTabsAndPanelBadgesToActiveWorkspace() {
@@ -387,6 +564,7 @@ final class WorkspaceShellTests: XCTestCase {
     private func workspaceNotification(
         workspaceID: Workspace.ID,
         panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID? = nil,
         shouldBadgePanel: Bool,
         agentKind: AgentNotificationKind? = nil,
         message: String = "Notification",
@@ -404,6 +582,7 @@ final class WorkspaceShellTests: XCTestCase {
             createdAt: createdAt,
             routing: WorkspaceNotificationRouting(
                 panelID: panelID,
+                workspaceSessionID: workspaceSessionID,
                 shouldShowInLeftRail: shouldShowInLeftRail,
                 shouldBadgePanel: shouldBadgePanel
             ),

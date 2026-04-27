@@ -1650,7 +1650,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceCoordinatorReplacingTerminalPanelCleansDetachedSession() async throws {
+    func testWorkspaceCoordinatorReplacingTerminalPanelPreservesDetachedSession() async throws {
         let workspace = Workspace.make(
             id: UUID(),
             rootURL: URL(fileURLWithPath: "/tmp/RefreshTerminalWorkspace")
@@ -1695,16 +1695,16 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         XCTAssertNotEqual(replacementWorkspaceSession.id, originalWorkspaceSession.id)
         XCTAssertNotEqual(replacementTerminalID, originalTerminalID)
-        XCTAssertNil(workspaceSessionStore.session(for: originalWorkspaceSession.id))
-        XCTAssertNil(terminalSessionController.session(for: originalTerminalID))
+        XCTAssertNotNil(workspaceSessionStore.session(for: originalWorkspaceSession.id))
+        XCTAssertNotNil(terminalSessionController.session(for: originalTerminalID))
         XCTAssertNotNil(workspaceSessionStore.session(for: replacementWorkspaceSession.id))
         XCTAssertNotNil(terminalSessionController.session(for: replacementTerminalID))
         XCTAssertEqual(client.startRequests.count, 2)
-        XCTAssertEqual(client.terminateCallCount, 1)
+        XCTAssertEqual(client.terminateCallCount, 0)
     }
 
     @MainActor
-    func testWorkspaceCoordinatorCloseFocusedTerminalCleansSession() async throws {
+    func testWorkspaceCoordinatorCloseFocusedTerminalDetachesPanelAndPreservesSession() async throws {
         let workspace = Workspace.make(
             id: UUID(),
             rootURL: URL(fileURLWithPath: "/tmp/CloseTerminalWorkspace")
@@ -1737,6 +1737,45 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         coordinator.closeFocusedPanel()
 
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertNotNil(terminalSessionController.session(for: sessionID))
+        XCTAssertNotNil(workspaceSessionStore.session(for: workspaceSession.id))
+        XCTAssertEqual(client.terminateCallCount, 0)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCloseSessionTerminatesTerminalAndDetachesPanels() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/CloseTerminalSessionWorkspace")
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let client = WorkspacePanelMockPTYClient(processID: 2470)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
+        )
+
+        try await coordinator.createTerminal(in: workspace.id)
+        guard
+            let workspaceSession = workspaceSession(
+                from: panelStore.rootNode.surface,
+                in: workspaceSessionStore
+            ),
+            case let .terminal(sessionID) = workspaceSession.content
+        else {
+            XCTFail("Expected terminal surface.")
+            return
+        }
+
+        coordinator.closeSession(id: workspaceSession.id)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertNil(terminalSessionController.session(for: sessionID))
         XCTAssertNil(workspaceSessionStore.session(for: workspaceSession.id))
         XCTAssertEqual(client.terminateCallCount, 1)
@@ -1759,6 +1798,12 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let previewSessionStore = PreviewSessionStore()
         let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(
+                activeWorkspace: Workspace.make(
+                    id: workspaceID,
+                    rootURL: URL(fileURLWithPath: "/tmp/PreviewSessionWorkspace")
+                )
+            ),
             panelStore: panelStore,
             previewSessionStore: previewSessionStore,
             workspaceSessionStore: workspaceSessionStore
@@ -1778,6 +1823,55 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         previewSessionStore.upsertState(state, for: previewID)
 
         coordinator.closeFocusedPanel()
+
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertNotNil(previewSessionStore.state(for: previewID))
+        XCTAssertEqual(previewSessionStore.sourceDocumentID(for: previewID), documentID)
+        XCTAssertNotNil(workspaceSessionStore.session(for: workspaceSession.id))
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCloseSessionRemovesPreviewStateAndBinding() {
+        let previewID = PreviewState.ID()
+        let documentID = DocumentSession.ID()
+        let workspaceID = Workspace.ID()
+        let workspaceSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .preview,
+            content: .preview(previewID: previewID, sourceDocumentID: documentID),
+            title: "Preview",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .session(sessionID: workspaceSession.id)))
+        let previewSessionStore = PreviewSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(
+                activeWorkspace: Workspace.make(
+                    id: workspaceID,
+                    rootURL: URL(fileURLWithPath: "/tmp/PreviewCloseSessionWorkspace")
+                )
+            ),
+            panelStore: panelStore,
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        let state = PreviewState(
+            id: previewID,
+            sourceDocumentID: documentID,
+            renderVersion: 1,
+            sanitizedMarkdown: SanitizedMarkdown(html: "<p>Preview</p>"),
+            mermaidBlocks: [],
+            errors: [],
+            zoom: PreviewState.defaultZoom,
+            scrollAnchor: nil
+        )
+        workspaceSessionStore.upsertSession(workspaceSession)
+        previewSessionStore.bind(previewID: previewID, sourceDocumentID: documentID)
+        previewSessionStore.upsertState(state, for: previewID)
+
+        coordinator.closeSession(id: workspaceSession.id)
 
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertNil(previewSessionStore.state(for: previewID))
@@ -1802,6 +1896,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let documentSessionStore = DocumentSessionStore()
         let workspaceSessionStore = WorkspaceSessionStore()
         let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
             panelStore: panelStore,
             documentSessionStore: documentSessionStore,
             workspaceSessionStore: workspaceSessionStore
@@ -1813,7 +1908,171 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         XCTAssertEqual(panelStore.rootNode.surface, .empty)
         XCTAssertEqual(documentSessionStore.session(for: documentID), documentSession)
+        XCTAssertNotNil(workspaceSessionStore.session(for: workspaceSession.id))
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCloseSessionRemovesEditorWorkspaceSessionOnly() {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/CloseEditorSessionWorkspace")
+        )
+        let documentID = DocumentSession.ID()
+        let documentSession = DocumentSession.make(
+            id: documentID,
+            workspaceID: workspace.id,
+            url: workspace.rootURL.appendingPathComponent("Shared.md")
+        )
+        let workspaceSession = WorkspaceSession(document: documentSession, id: WorkspaceSession.ID())
+        let panelStore = PanelStore(rootNode: .leaf(surface: .session(sessionID: workspaceSession.id)))
+        let documentSessionStore = DocumentSessionStore()
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            documentSessionStore: documentSessionStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        documentSessionStore.upsertSession(documentSession)
+        workspaceSessionStore.upsertSession(workspaceSession)
+
+        coordinator.closeSession(id: workspaceSession.id)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertEqual(documentSessionStore.session(for: documentID), documentSession)
         XCTAssertNil(workspaceSessionStore.session(for: workspaceSession.id))
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorShowSessionRevealsHiddenSessionInEmptyPanel() {
+        let workspaceID = Workspace.ID()
+        let hiddenSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: workspaceID,
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelID = PanelNode.ID()
+        let panelStore = PanelStore(rootNode: .leaf(id: panelID, surface: .empty))
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(
+                activeWorkspace: Workspace.make(
+                    id: workspaceID,
+                    rootURL: URL(fileURLWithPath: "/tmp/ShowHiddenSessionWorkspace")
+                )
+            ),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        workspaceSessionStore.upsertSession(hiddenSession)
+
+        coordinator.showSession(id: hiddenSession.id, replacingPanel: panelID)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .session(sessionID: hiddenSession.id))
+        XCTAssertEqual(panelStore.focusedPanelID, panelID)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorShowSessionFocusesAlreadyVisibleSession() {
+        let workspaceID = Workspace.ID()
+        let sessionID = WorkspaceSession.ID()
+        let visiblePanelID = PanelNode.ID()
+        let focusedPanelID = PanelNode.ID()
+        let session = WorkspaceSession(
+            id: sessionID,
+            workspaceID: workspaceID,
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelStore = PanelStore(
+            rootNode: .split(
+                direction: .horizontal,
+                first: .leaf(id: visiblePanelID, surface: .session(sessionID: sessionID)),
+                second: .leaf(id: focusedPanelID, surface: .empty)
+            ),
+            focusedPanelID: focusedPanelID
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(
+                activeWorkspace: Workspace.make(
+                    id: workspaceID,
+                    rootURL: URL(fileURLWithPath: "/tmp/FocusVisibleSessionWorkspace")
+                )
+            ),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        workspaceSessionStore.upsertSession(session)
+
+        coordinator.showSession(id: sessionID, replacingPanel: focusedPanelID)
+
+        XCTAssertEqual(panelStore.focusedPanelID, visiblePanelID)
+        XCTAssertEqual(panelStore.rootNode.leafIDs.count, 2)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorShowSessionIgnoresInactiveWorkspaceSession() {
+        let activeWorkspace = Workspace.make(
+            id: Workspace.ID(),
+            rootURL: URL(fileURLWithPath: "/tmp/ActiveSessionWorkspace")
+        )
+        let inactiveSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: Workspace.ID(),
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Inactive Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelID = PanelNode.ID()
+        let panelStore = PanelStore(rootNode: .leaf(id: panelID, surface: .empty))
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: activeWorkspace),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        workspaceSessionStore.upsertSession(inactiveSession)
+
+        coordinator.showSession(id: inactiveSession.id, replacingPanel: panelID)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertEqual(workspaceSessionStore.session(for: inactiveSession.id), inactiveSession)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCloseSessionIgnoresInactiveWorkspaceSession() {
+        let activeWorkspace = Workspace.make(
+            id: Workspace.ID(),
+            rootURL: URL(fileURLWithPath: "/tmp/ActiveCloseSessionWorkspace")
+        )
+        let inactiveSession = WorkspaceSession(
+            id: WorkspaceSession.ID(),
+            workspaceID: Workspace.ID(),
+            kind: .terminal,
+            content: .terminal(TerminalSession.ID()),
+            title: "Inactive Terminal",
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: activeWorkspace),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+        workspaceSessionStore.upsertSession(inactiveSession)
+
+        coordinator.closeSession(id: inactiveSession.id)
+
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertEqual(workspaceSessionStore.session(for: inactiveSession.id), inactiveSession)
     }
 
     @MainActor
@@ -2076,6 +2335,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceOpening: handler,
             documentOpening: handler,
             terminalCommanding: handler,
+            workspaceSessionCommanding: handler,
             panelCommanding: handler
         )
         let rootURL = URL(fileURLWithPath: "/tmp/RoutedWorkspace")
@@ -2083,6 +2343,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let workspaceID = Workspace.ID()
         let closedWorkspaceID = Workspace.ID()
         let panelID = PanelNode.ID()
+        let sessionID = WorkspaceSession.ID()
         let splitSurface = PanelSurfaceDescriptor.empty
 
         try await router.openWorkspace(rootURL: rootURL)
@@ -2100,6 +2361,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         try await router.createTerminal(in: workspaceID)
         try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
+        router.focusSession(id: sessionID)
+        router.showSession(id: sessionID, replacingPanel: panelID)
+        router.closeSession(id: sessionID)
         router.focus(panelID: panelID)
         router.createPanel(splitDirection: .horizontal, surface: splitSurface)
         router.splitPanel(panelID: panelID, direction: .vertical, surface: splitSurface)
@@ -2117,6 +2381,10 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(handler.openedDocumentSplitDirection, .horizontal)
         XCTAssertEqual(handler.terminalWorkspaceID, workspaceID)
         XCTAssertEqual(handler.terminalPanelID, panelID)
+        XCTAssertEqual(handler.focusedSessionID, sessionID)
+        XCTAssertEqual(handler.shownSessionID, sessionID)
+        XCTAssertEqual(handler.shownSessionPanelID, panelID)
+        XCTAssertEqual(handler.closedSessionID, sessionID)
         XCTAssertEqual(handler.focusedPanelID, panelID)
         XCTAssertEqual(handler.createdPanelDirection, .horizontal)
         XCTAssertEqual(handler.createdPanelSurface, splitSurface)
@@ -2356,7 +2624,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, PanelCommanding {
+    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCommanding, PanelCommanding {
         var openedRootURL: URL?
         var closedWorkspaceID: Workspace.ID?
         var openedDocumentURL: URL?
@@ -2365,6 +2633,10 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var openedDocumentSplitDirection: SplitDirection?
         var terminalWorkspaceID: Workspace.ID?
         var terminalPanelID: PanelNode.ID?
+        var focusedSessionID: WorkspaceSession.ID?
+        var shownSessionID: WorkspaceSession.ID?
+        var shownSessionPanelID: PanelNode.ID?
+        var closedSessionID: WorkspaceSession.ID?
         var focusedPanelID: PanelNode.ID?
         var createdPanelDirection: SplitDirection?
         var createdPanelSurface: PanelSurfaceDescriptor?
@@ -2420,6 +2692,19 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID) async throws {
             terminalWorkspaceID = workspaceID
             terminalPanelID = panelID
+        }
+
+        func focusSession(id sessionID: WorkspaceSession.ID) {
+            focusedSessionID = sessionID
+        }
+
+        func showSession(id sessionID: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?) {
+            shownSessionID = sessionID
+            shownSessionPanelID = panelID
+        }
+
+        func closeSession(id sessionID: WorkspaceSession.ID) {
+            closedSessionID = sessionID
         }
 
         func focus(panelID: PanelNode.ID?) {

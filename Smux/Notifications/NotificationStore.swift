@@ -36,6 +36,8 @@ final class NotificationStore: ObservableObject {
         let acknowledgedAt = notification.acknowledgedAt ?? existingNotification?.acknowledgedAt
         var routedNotification = notification
         routedNotification.acknowledgedAt = acknowledgedAt
+        routedNotification.workspaceSessionID = notification.workspaceSessionID
+            ?? existingNotification?.routing.workspaceSessionID
 
         let workspaceNotification = WorkspaceNotification(
             id: notification.id,
@@ -74,6 +76,7 @@ final class NotificationStore: ObservableObject {
         notification.acknowledgedAt = clock()
         notification.routing = policy.route(
             panelID: notification.routing.panelID,
+            workspaceSessionID: notification.routing.workspaceSessionID,
             level: notification.level,
             acknowledgedAt: notification.acknowledgedAt
         )
@@ -135,6 +138,7 @@ final class NotificationStore: ObservableObject {
             var reroutedNotification = notification
             reroutedNotification.routing = policy.route(
                 panelID: notification.routing.panelID,
+                workspaceSessionID: notification.routing.workspaceSessionID,
                 level: notification.level,
                 acknowledgedAt: notification.acknowledgedAt
             )

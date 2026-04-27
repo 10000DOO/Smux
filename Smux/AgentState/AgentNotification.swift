@@ -22,6 +22,7 @@ nonisolated struct AgentNotification: Identifiable, Codable, Hashable {
     var workspaceID: Workspace.ID
     var panelID: PanelNode.ID?
     var sessionID: TerminalSession.ID
+    var workspaceSessionID: WorkspaceSession.ID? = nil
     var level: NotificationLevel
     var kind: AgentNotificationKind
     var message: String

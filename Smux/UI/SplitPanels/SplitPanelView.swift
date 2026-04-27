@@ -166,18 +166,23 @@ struct SplitPanelView: View {
             case .session(let sessionID):
                 sessionSurfaceView(sessionID: sessionID, panelID: panelID)
             case .empty:
-                PanelSurfacePlaceholderView(
-                    surface: surface,
+                PanelStartSurfaceView(
                     isFocused: focusedPanelID == panelID,
-                    selectedDocumentURL: selectedDocumentURL,
-                    onSplit: { direction in
-                        onSplit(panelID, direction)
-                    },
+                    canOpenDocument: selectedDocumentURL != nil,
                     onCreateTerminal: {
                         onCreateTerminal(panelID)
                     },
-                    onOpenSelectedDocument: { preferredSurface in
-                        onOpenSelectedDocument(panelID, preferredSurface)
+                    onOpenEditor: {
+                        onOpenSelectedDocument(panelID, .editor)
+                    },
+                    onOpenPreview: {
+                        onOpenSelectedDocument(panelID, .preview)
+                    },
+                    onSplitRight: {
+                        onSplit(panelID, .horizontal)
+                    },
+                    onSplitDown: {
+                        onSplit(panelID, .vertical)
                     }
                 )
             }
@@ -200,7 +205,8 @@ struct SplitPanelView: View {
         .overlay(alignment: .topTrailing) {
             PanelNotificationBadgeView(
                 count: PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
-                    for: panelID,
+                    for: surface,
+                    panelID: panelID,
                     notifications: notifications
                 )
             )

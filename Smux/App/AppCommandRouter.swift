@@ -5,6 +5,7 @@ struct AppCommandRouter {
     var workspaceOpening: (any WorkspaceOpening)?
     var documentOpening: (any DocumentOpening)?
     var terminalCommanding: (any TerminalCommanding)?
+    var workspaceSessionCommanding: (any WorkspaceSessionCommanding)?
     var panelCommanding: (any PanelCommanding)?
 
     func openWorkspace(rootURL: URL) async throws {
@@ -77,6 +78,18 @@ struct AppCommandRouter {
         }
 
         try await terminalCommanding.createTerminal(in: workspaceID, replacingPanel: Optional(panelID))
+    }
+
+    func focusSession(id sessionID: WorkspaceSession.ID) {
+        workspaceSessionCommanding?.focusSession(id: sessionID)
+    }
+
+    func showSession(id sessionID: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?) {
+        workspaceSessionCommanding?.showSession(id: sessionID, replacingPanel: panelID)
+    }
+
+    func closeSession(id sessionID: WorkspaceSession.ID) {
+        workspaceSessionCommanding?.closeSession(id: sessionID)
     }
 
     func focus(panelID: PanelNode.ID?) {

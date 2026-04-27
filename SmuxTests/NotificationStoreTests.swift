@@ -8,6 +8,7 @@ final class NotificationStoreTests: XCTestCase {
         let workspaceID = Workspace.ID()
         let panelID = PanelNode.ID()
         let sessionID = TerminalSession.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
         let notifier = RecordingSystemNotifier()
         let store = NotificationStore(systemNotifier: notifier)
         let original = agentNotification(
@@ -15,6 +16,7 @@ final class NotificationStoreTests: XCTestCase {
             workspaceID: workspaceID,
             panelID: panelID,
             sessionID: sessionID,
+            workspaceSessionID: workspaceSessionID,
             level: .warning,
             kind: .waitingForInput,
             message: "Waiting"
@@ -41,6 +43,7 @@ final class NotificationStoreTests: XCTestCase {
         XCTAssertEqual(store.notifications.first?.message, "Failed")
         XCTAssertEqual(store.notifications.first?.createdAt, updated.createdAt)
         XCTAssertNil(store.notifications.first?.routing.panelID)
+        XCTAssertEqual(store.notifications.first?.routing.workspaceSessionID, workspaceSessionID)
         XCTAssertTrue(notifier.deliveries.isEmpty)
     }
 
@@ -252,6 +255,7 @@ final class NotificationStoreTests: XCTestCase {
         XCTAssertFalse(store.notifications.first?.routing.shouldShowInLeftRail ?? true)
         XCTAssertFalse(store.notifications.first?.routing.shouldBadgePanel ?? true)
         XCTAssertEqual(store.notifications.first?.routing.panelID, panelID)
+        XCTAssertNil(store.notifications.first?.routing.workspaceSessionID)
     }
 
     @MainActor
@@ -378,6 +382,7 @@ final class NotificationStoreTests: XCTestCase {
         workspaceID: Workspace.ID = Workspace.ID(),
         panelID: PanelNode.ID? = PanelNode.ID(),
         sessionID: TerminalSession.ID = TerminalSession.ID(),
+        workspaceSessionID: WorkspaceSession.ID? = nil,
         level: NotificationLevel = .info,
         kind: AgentNotificationKind = .waitingForInput,
         message: String = "Notification",
@@ -389,6 +394,7 @@ final class NotificationStoreTests: XCTestCase {
             workspaceID: workspaceID,
             panelID: panelID,
             sessionID: sessionID,
+            workspaceSessionID: workspaceSessionID,
             level: level,
             kind: kind,
             message: message,

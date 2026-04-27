@@ -4,7 +4,7 @@ struct LeftRailView: View {
     var workspace: Workspace?
     var workspaces: [Workspace] = []
     var recentWorkspaces: [RecentWorkspace] = []
-    var panelTabs: [LeftRailPanelTabPresentation] = []
+    var sessionItems: [LeftRailSessionPresentation] = []
     var notificationSummary: LeftRailNotificationSummary = .empty
     var visibleNotifications: [WorkspaceNotification] = []
     var fileTreeRoot: FileTreeNode? = nil
@@ -12,7 +12,8 @@ struct LeftRailView: View {
     var isCollapsed = false
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
-    var onSelectPanel: (PanelNode.ID) -> Void = { _ in }
+    var onSelectSession: (WorkspaceSession.ID) -> Void = { _ in }
+    var onCloseSession: (WorkspaceSession.ID) -> Void = { _ in }
     var onOpenWorkspace: () -> Void = {}
     var onToggleCollapsed: () -> Void = {}
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }
@@ -62,24 +63,24 @@ private extension LeftRailView {
             Divider()
                 .padding(.horizontal, 10)
 
-            ForEach(panelTabs) { panelTab in
+            ForEach(sessionItems) { sessionItem in
                 Button {
-                    onSelectPanel(panelTab.id)
+                    onSelectSession(sessionItem.id)
                 } label: {
-                    Image(systemName: panelTab.systemImage)
-                        .font(.system(size: 14, weight: panelTab.isFocused ? .semibold : .regular))
+                    Image(systemName: sessionItem.systemImage)
+                        .font(.system(size: 14, weight: sessionItem.isFocused ? .semibold : .regular))
                         .frame(width: 32, height: 32)
-                        .foregroundStyle(panelTab.isFocused ? Color.primary : Color.secondary)
+                        .foregroundStyle(sessionItem.isFocused ? Color.primary : Color.secondary)
                         .background {
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(panelTab.isFocused ? Color.secondary.opacity(0.14) : Color.clear)
+                                .fill(sessionItem.isFocused ? Color.secondary.opacity(0.14) : Color.clear)
                         }
                         .overlay(alignment: .topTrailing) {
-                            compactBadge(count: panelTab.badgeCount)
+                            compactBadge(count: sessionItem.badgeCount)
                         }
                 }
                 .buttonStyle(.plain)
-                .help(panelTab.title)
+                .help(sessionItem.title)
             }
 
             Spacer(minLength: 12)
@@ -152,57 +153,72 @@ private extension LeftRailView {
     }
 
     var sessionSection: some View {
-        railSection(title: "Sessions", count: panelTabs.count) {
-            if panelTabs.isEmpty {
+        railSection(title: "Sessions", count: sessionItems.count) {
+            if sessionItems.isEmpty {
                 emptyLine("No sessions")
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(panelTabs) { panelTab in
-                        sessionRow(panelTab)
+                    ForEach(sessionItems) { sessionItem in
+                        sessionRow(sessionItem)
                     }
                 }
             }
         }
     }
 
-    func sessionRow(_ panelTab: LeftRailPanelTabPresentation) -> some View {
-        Button {
-            onSelectPanel(panelTab.id)
-        } label: {
-            HStack(spacing: 9) {
-                Rectangle()
-                    .fill(panelTab.isFocused ? Color.accentColor : Color.clear)
-                    .frame(width: 3)
-                    .clipShape(Capsule())
+    func sessionRow(_ sessionItem: LeftRailSessionPresentation) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                onSelectSession(sessionItem.id)
+            } label: {
+                HStack(spacing: 9) {
+                    Rectangle()
+                        .fill(sessionItem.isFocused ? Color.accentColor : Color.clear)
+                        .frame(width: 3)
+                        .clipShape(Capsule())
 
-                Image(systemName: panelTab.systemImage)
-                    .font(.system(size: 14, weight: .medium))
-                    .frame(width: 18)
-                    .foregroundStyle(panelTab.isFocused ? Color.primary : Color.secondary)
+                    Image(systemName: sessionItem.systemImage)
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 18)
+                        .foregroundStyle(sessionItem.isFocused ? Color.primary : Color.secondary)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(panelTab.title)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                    Text(panelTab.latestNotificationMessage ?? panelTab.metadataText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(sessionItem.title)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        Text(sessionItem.latestNotificationMessage ?? sessionItem.metadataText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 6)
+                    sessionBadge(count: sessionItem.badgeCount)
                 }
+                .padding(.vertical, 7)
+                .padding(.trailing, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(sessionItem.isFocused ? Color.secondary.opacity(0.12) : Color.clear)
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .accessibilityLabel(sessionItem.title)
 
-                Spacer(minLength: 6)
-                sessionBadge(count: panelTab.badgeCount)
+            Button {
+                onCloseSession(sessionItem.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 18, height: 18)
             }
-            .padding(.vertical, 7)
-            .padding(.trailing, 8)
-            .background {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(panelTab.isFocused ? Color.secondary.opacity(0.12) : Color.clear)
-            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+            .help("Close session")
+            .accessibilityLabel("Close \(sessionItem.title)")
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
-        .accessibilityLabel(panelTab.title)
     }
 
     var workspaceSection: some View {

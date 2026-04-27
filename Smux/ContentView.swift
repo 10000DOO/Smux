@@ -143,6 +143,7 @@ private final class AppComposition: ObservableObject {
             workspaceOpening: workspaceCoordinator,
             documentOpening: workspaceCoordinator,
             terminalCommanding: workspaceCoordinator,
+            workspaceSessionCommanding: workspaceCoordinator,
             panelCommanding: workspaceCoordinator
         )
         systemNotificationDeliverer.prepare { [logger] result in
@@ -395,32 +396,26 @@ private final class TerminalOutputContext {
         }
 
         outputStore.append(data, for: sessionID)
+        let workspaceSessionID = workspaceSessionID(containingTerminalSession: sessionID)
         monitor.ingest(
             output: data,
             sessionID: sessionID,
             workspaceID: session.workspaceID,
-            panelID: panelID(containingTerminalSession: sessionID)
+            panelID: panelID(containingWorkspaceSession: workspaceSessionID),
+            workspaceSessionID: workspaceSessionID
         )
     }
 
-    private func panelID(containingTerminalSession terminalID: TerminalSession.ID) -> PanelNode.ID? {
-        guard let workspaceSessionID = workspaceSessionStore?.sessionID(for: .terminal(terminalID)) else {
+    private func workspaceSessionID(containingTerminalSession terminalID: TerminalSession.ID) -> WorkspaceSession.ID? {
+        workspaceSessionStore?.sessionID(for: .terminal(terminalID))
+    }
+
+    private func panelID(containingWorkspaceSession workspaceSessionID: WorkspaceSession.ID?) -> PanelNode.ID? {
+        guard let workspaceSessionID else {
             return nil
         }
 
         return panelStore?.rootNode.panelID(containingWorkspaceSession: workspaceSessionID)
-    }
-}
-
-private extension PanelNode {
-    func panelID(containingWorkspaceSession sessionID: WorkspaceSession.ID) -> PanelNode.ID? {
-        if surface?.sessionID == sessionID, isLeaf {
-            return id
-        }
-
-        return children.lazy.compactMap {
-            $0.panelID(containingWorkspaceSession: sessionID)
-        }.first
     }
 }
 

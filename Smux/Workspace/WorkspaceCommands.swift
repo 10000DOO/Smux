@@ -49,6 +49,19 @@ extension TerminalCommanding {
 }
 
 @MainActor
+protocol WorkspaceSessionCommanding {
+    func focusSession(id: WorkspaceSession.ID)
+    func showSession(id: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?)
+    func closeSession(id: WorkspaceSession.ID)
+}
+
+extension WorkspaceSessionCommanding {
+    func showSession(id: WorkspaceSession.ID) {
+        showSession(id: id, replacingPanel: nil)
+    }
+}
+
+@MainActor
 protocol PanelCommanding {
     func focus(panelID: PanelNode.ID?)
     func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor)
@@ -90,22 +103,56 @@ extension WorkspaceCoordinator {
             return
         }
 
-        let surface = panelStore.focusedSurface
         panelStore.closeFocusedPanel()
-        cleanupDetachedPanelSurface(surface)
     }
 
-    func cleanupDetachedPanelSurface(_ surface: PanelSurfaceDescriptor?) {
-        guard let surface else {
+    func focusSession(id sessionID: WorkspaceSession.ID) {
+        guard activeWorkspaceSession(for: sessionID) != nil,
+              let panelID = panelStore?.rootNode.panelID(containingWorkspaceSession: sessionID) else {
             return
         }
 
-        switch surface {
-        case .session(let sessionID):
-            cleanupDetachedWorkspaceSession(id: sessionID)
-        case .empty:
-            break
+        panelStore?.focus(panelID: panelID)
+    }
+
+    func showSession(id sessionID: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?) {
+        guard activeWorkspaceSession(for: sessionID) != nil else {
+            return
         }
+
+        if let visiblePanelID = panelStore?.rootNode.panelID(containingWorkspaceSession: sessionID) {
+            panelStore?.focus(panelID: visiblePanelID)
+            return
+        }
+
+        let surface = PanelSurfaceDescriptor.session(sessionID: sessionID)
+
+        if let panelID,
+           panelStore?.rootNode.containsLeaf(panelID: panelID) == true,
+           panelStore?.rootNode.surface(forLeaf: panelID) == .empty {
+            panelStore?.replacePanel(panelID: panelID, with: surface)
+            return
+        }
+
+        if panelStore?.focusedSurface == .empty {
+            panelStore?.replaceFocusedPanel(with: surface)
+            return
+        }
+
+        panelStore?.createPanel(splitDirection: .horizontal, surface: surface)
+    }
+
+    func closeSession(id sessionID: WorkspaceSession.ID) {
+        guard activeWorkspaceSession(for: sessionID) != nil else {
+            return
+        }
+
+        while let panelStore,
+              let panelID = panelStore.rootNode.panelID(containingWorkspaceSession: sessionID) {
+            panelStore.replacePanel(panelID: panelID, with: .empty)
+        }
+
+        cleanupDetachedWorkspaceSession(id: sessionID)
     }
 
     private func cleanupDetachedWorkspaceSession(id sessionID: WorkspaceSession.ID) {
@@ -124,5 +171,15 @@ extension WorkspaceCoordinator {
             // Document content may be shared by preview sessions and text buffers.
             workspaceSessionStore?.removeSession(id: session.id)
         }
+    }
+
+    private func activeWorkspaceSession(for sessionID: WorkspaceSession.ID) -> WorkspaceSession? {
+        guard let session = workspaceSessionStore?.session(for: sessionID),
+              let activeWorkspaceID = workspaceStore?.activeWorkspace?.id,
+              session.workspaceID == activeWorkspaceID else {
+            return nil
+        }
+
+        return session
     }
 }

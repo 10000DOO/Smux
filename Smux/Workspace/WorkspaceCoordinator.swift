@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, PanelCommanding {
+final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCommanding, PanelCommanding {
     var workspaceStore: WorkspaceStore?
     var panelStore: PanelStore?
     var workspaceRepository: (any WorkspaceRepository)?
@@ -527,26 +527,11 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
 
     private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {
         if let panelID, panelStore?.rootNode.containsLeaf(panelID: panelID) == true {
-            let detachedSurface = panelStore?.rootNode.surface(forLeaf: panelID)
             panelStore?.replacePanel(panelID: panelID, with: surface)
-            cleanupReplacedPanelSurface(detachedSurface, replacement: surface)
             return
         }
 
-        let detachedSurface = panelStore?.focusedSurface
         panelStore?.replaceFocusedPanel(with: surface)
-        cleanupReplacedPanelSurface(detachedSurface, replacement: surface)
-    }
-
-    private func cleanupReplacedPanelSurface(
-        _ detachedSurface: PanelSurfaceDescriptor?,
-        replacement: PanelSurfaceDescriptor
-    ) {
-        guard detachedSurface != replacement else {
-            return
-        }
-
-        cleanupDetachedPanelSurface(detachedSurface)
     }
 }
 

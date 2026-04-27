@@ -23,6 +23,7 @@ nonisolated struct NotificationRoutingPolicy: Codable, Hashable {
     func route(_ notification: AgentNotification) -> WorkspaceNotificationRouting {
         route(
             panelID: notification.panelID,
+            workspaceSessionID: notification.workspaceSessionID,
             level: notification.level,
             acknowledgedAt: notification.acknowledgedAt
         )
@@ -30,6 +31,7 @@ nonisolated struct NotificationRoutingPolicy: Codable, Hashable {
 
     func route(
         panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID? = nil,
         level: NotificationLevel,
         acknowledgedAt: Date?
     ) -> WorkspaceNotificationRouting {
@@ -39,8 +41,9 @@ nonisolated struct NotificationRoutingPolicy: Codable, Hashable {
 
         return WorkspaceNotificationRouting(
             panelID: panelID,
+            workspaceSessionID: workspaceSessionID,
             shouldShowInLeftRail: shouldShow,
-            shouldBadgePanel: shouldShow && !isAcknowledged && panelID != nil
+            shouldBadgePanel: shouldShow && !isAcknowledged && (workspaceSessionID != nil || panelID != nil)
         )
     }
 

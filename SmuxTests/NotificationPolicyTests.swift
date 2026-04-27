@@ -4,14 +4,28 @@ import XCTest
 final class NotificationPolicyTests: XCTestCase {
     func testRoutingPolicyFiltersByMinimumLevelAndAcknowledgement() {
         let panelID = PanelNode.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
         let policy = NotificationRoutingPolicy(showsAcknowledged: false, minimumLevel: .warning)
 
-        let lowPriorityRoute = policy.route(agentNotification(panelID: panelID, level: .info))
+        let lowPriorityRoute = policy.route(
+            agentNotification(
+                panelID: panelID,
+                workspaceSessionID: workspaceSessionID,
+                level: .info
+            )
+        )
         XCTAssertFalse(lowPriorityRoute.shouldShowInLeftRail)
         XCTAssertFalse(lowPriorityRoute.shouldBadgePanel)
         XCTAssertEqual(lowPriorityRoute.panelID, panelID)
+        XCTAssertEqual(lowPriorityRoute.workspaceSessionID, workspaceSessionID)
 
-        let visibleRoute = policy.route(agentNotification(panelID: panelID, level: .warning))
+        let visibleRoute = policy.route(
+            agentNotification(
+                panelID: panelID,
+                workspaceSessionID: workspaceSessionID,
+                level: .warning
+            )
+        )
         XCTAssertTrue(visibleRoute.shouldShowInLeftRail)
         XCTAssertTrue(visibleRoute.shouldBadgePanel)
 
@@ -68,10 +82,12 @@ final class NotificationPolicyTests: XCTestCase {
 
     func testRoutingPolicyRoutesFromPrimitiveNotificationFields() {
         let panelID = PanelNode.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
         let policy = NotificationRoutingPolicy(showsAcknowledged: false, minimumLevel: .warning)
 
         let route = policy.route(
             panelID: panelID,
+            workspaceSessionID: workspaceSessionID,
             level: .critical,
             acknowledgedAt: Date(timeIntervalSince1970: 10)
         )
@@ -79,6 +95,7 @@ final class NotificationPolicyTests: XCTestCase {
         XCTAssertFalse(route.shouldShowInLeftRail)
         XCTAssertFalse(route.shouldBadgePanel)
         XCTAssertEqual(route.panelID, panelID)
+        XCTAssertEqual(route.workspaceSessionID, workspaceSessionID)
     }
 
     func testDeliveryFactoryCreatesSystemDeliveryPayload() {
@@ -103,6 +120,7 @@ final class NotificationPolicyTests: XCTestCase {
         workspaceID: Workspace.ID = Workspace.ID(),
         panelID: PanelNode.ID? = PanelNode.ID(),
         sessionID: TerminalSession.ID = TerminalSession.ID(),
+        workspaceSessionID: WorkspaceSession.ID? = nil,
         level: NotificationLevel = .info,
         kind: AgentNotificationKind = .waitingForInput,
         message: String = "Notification",
@@ -113,6 +131,7 @@ final class NotificationPolicyTests: XCTestCase {
             workspaceID: workspaceID,
             panelID: panelID,
             sessionID: sessionID,
+            workspaceSessionID: workspaceSessionID,
             level: level,
             kind: kind,
             message: message,

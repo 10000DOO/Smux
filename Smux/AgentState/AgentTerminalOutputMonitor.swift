@@ -21,7 +21,8 @@ final class AgentTerminalOutputMonitor {
         output data: Data,
         sessionID: TerminalSession.ID,
         workspaceID: Workspace.ID,
-        panelID: PanelNode.ID?
+        panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID? = nil
     ) -> AgentNotification? {
         guard let output = String(data: data, encoding: .utf8) else {
             return nil
@@ -31,7 +32,8 @@ final class AgentTerminalOutputMonitor {
             output: output,
             sessionID: sessionID,
             workspaceID: workspaceID,
-            panelID: panelID
+            panelID: panelID,
+            workspaceSessionID: workspaceSessionID
         )
     }
 
@@ -40,13 +42,20 @@ final class AgentTerminalOutputMonitor {
         output: String,
         sessionID: TerminalSession.ID,
         workspaceID: Workspace.ID,
-        panelID: PanelNode.ID?
+        panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID? = nil
     ) -> AgentNotification? {
         guard let status = detector.detectStatus(from: output, sessionID: sessionID) else {
             return nil
         }
 
-        return ingest(status: status, sessionID: sessionID, workspaceID: workspaceID, panelID: panelID)
+        return ingest(
+            status: status,
+            sessionID: sessionID,
+            workspaceID: workspaceID,
+            panelID: panelID,
+            workspaceSessionID: workspaceSessionID
+        )
     }
 
     @discardableResult
@@ -54,13 +63,20 @@ final class AgentTerminalOutputMonitor {
         hookPayload payload: AgentHookPayload,
         sessionID: TerminalSession.ID,
         workspaceID: Workspace.ID,
-        panelID: PanelNode.ID?
+        panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID? = nil
     ) -> AgentNotification? {
         guard let status = detector.detectStatus(from: payload, sessionID: sessionID) else {
             return nil
         }
 
-        return ingest(status: status, sessionID: sessionID, workspaceID: workspaceID, panelID: panelID)
+        return ingest(
+            status: status,
+            sessionID: sessionID,
+            workspaceID: workspaceID,
+            panelID: panelID,
+            workspaceSessionID: workspaceSessionID
+        )
     }
 
     func reset(sessionID: TerminalSession.ID) {
@@ -73,13 +89,15 @@ final class AgentTerminalOutputMonitor {
         status: AgentStatus,
         sessionID: TerminalSession.ID,
         workspaceID: Workspace.ID,
-        panelID: PanelNode.ID?
+        panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID?
     ) -> AgentNotification? {
         guard let transition = stateStore.ingest(status, sessionID: sessionID),
               let notification = Self.notification(
                 for: transition,
                 workspaceID: workspaceID,
-                panelID: panelID
+                panelID: panelID,
+                workspaceSessionID: workspaceSessionID
               ) else {
             return nil
         }
@@ -91,7 +109,8 @@ final class AgentTerminalOutputMonitor {
     private static func notification(
         for transition: AgentStateTransition,
         workspaceID: Workspace.ID,
-        panelID: PanelNode.ID?
+        panelID: PanelNode.ID?,
+        workspaceSessionID: WorkspaceSession.ID?
     ) -> AgentNotification? {
         guard let kind = AgentNotificationKind(state: transition.currentStatus.state) else {
             return nil
@@ -102,6 +121,7 @@ final class AgentTerminalOutputMonitor {
             workspaceID: workspaceID,
             panelID: panelID,
             sessionID: transition.sessionID,
+            workspaceSessionID: workspaceSessionID,
             level: NotificationLevel(kind: kind),
             kind: kind,
             message: transition.currentStatus.message ?? kind.defaultMessage,

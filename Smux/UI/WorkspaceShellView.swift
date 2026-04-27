@@ -27,7 +27,7 @@ struct WorkspaceShellView: View {
                 workspace: workspaceStore.activeWorkspace,
                 workspaces: workspaceStore.workspaces,
                 recentWorkspaces: recentWorkspaceStore.recentWorkspaces,
-                panelTabs: leftRailPanelTabs,
+                sessionItems: leftRailSessionItems,
                 notificationSummary: leftRailNotificationSummary,
                 visibleNotifications: visibleLeftRailNotifications,
                 fileTreeRoot: fileTreeStore.root,
@@ -35,7 +35,8 @@ struct WorkspaceShellView: View {
                 isCollapsed: isLeftRailCollapsed,
                 onExpandFileTreeNode: expandFileTreeNode,
                 onSelectFileTreeNode: selectFileTreeNode,
-                onSelectPanel: { commandRouter.focus(panelID: $0) },
+                onSelectSession: selectSession,
+                onCloseSession: closeSession,
                 onOpenWorkspace: onOpenWorkspace,
                 onToggleCollapsed: {
                     isLeftRailCollapsed.toggle()
@@ -323,17 +324,20 @@ private extension WorkspaceShellView {
         )
     }
 
-    var leftRailPanelTabs: [LeftRailPanelTabPresentation] {
-        panelStore.rootNode
-            .leafSummaries(focusedPanelID: panelStore.focusedPanelID)
-            .map { panel in
-                LeftRailPanelTabPresentation(
-                    panel: panel,
-                    session: panel.surface.sessionID.flatMap { workspaceSessionStore.session(for: $0) },
-                    workspace: workspaceStore.activeWorkspace,
-                    notifications: activeWorkspaceNotifications
-                )
-            }
+    var leftRailSessionItems: [LeftRailSessionPresentation] {
+        guard let activeWorkspaceID = workspaceStore.activeWorkspace?.id else {
+            return []
+        }
+
+        return workspaceSessionStore.sessions(in: activeWorkspaceID).map { session in
+            LeftRailSessionPresentation(
+                session: session,
+                visiblePanelID: panelStore.rootNode.panelID(containingWorkspaceSession: session.id),
+                focusedPanelID: panelStore.focusedPanelID,
+                workspace: workspaceStore.activeWorkspace,
+                notifications: activeWorkspaceNotifications
+            )
+        }
     }
 
     var visibleLeftRailNotifications: [WorkspaceNotification] {
@@ -377,6 +381,14 @@ private extension WorkspaceShellView {
         }
     }
 
+    func selectSession(id sessionID: WorkspaceSession.ID) {
+        commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
+    }
+
+    func closeSession(id sessionID: WorkspaceSession.ID) {
+        commandRouter.closeSession(id: sessionID)
+    }
+
     func closeWorkspace(id: Workspace.ID) {
         Task { @MainActor in
             do {
@@ -402,7 +414,10 @@ private extension WorkspaceShellView {
             return
         }
 
-        if let panelID = notification.routing.panelID {
+        if let sessionID = notification.routing.workspaceSessionID,
+           workspaceSessionStore.session(for: sessionID) != nil {
+            commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
+        } else if let panelID = notification.routing.panelID {
             commandRouter.focus(panelID: panelID)
         }
         notificationStore.acknowledge(id: notificationID)

@@ -9,6 +9,7 @@ nonisolated enum WorkspaceNotificationSource: Codable, Hashable {
 
 nonisolated struct WorkspaceNotificationRouting: Codable, Hashable {
     var panelID: PanelNode.ID?
+    var workspaceSessionID: WorkspaceSession.ID? = nil
     var shouldShowInLeftRail: Bool
     var shouldBadgePanel: Bool
 }

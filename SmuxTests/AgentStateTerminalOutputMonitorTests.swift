@@ -42,6 +42,7 @@ final class AgentStateTerminalOutputMonitorTests: XCTestCase {
             notificationStore: notificationStore
         )
         let sessionID = TerminalSession.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
         let workspaceID = Workspace.ID()
         let panelID = PanelNode.ID()
 
@@ -49,17 +50,20 @@ final class AgentStateTerminalOutputMonitorTests: XCTestCase {
             output: Data("Codex\nDo you want to allow this command?".utf8),
             sessionID: sessionID,
             workspaceID: workspaceID,
-            panelID: panelID
+            panelID: panelID,
+            workspaceSessionID: workspaceSessionID
         )
 
         XCTAssertEqual(notification?.workspaceID, workspaceID)
         XCTAssertEqual(notification?.panelID, panelID)
         XCTAssertEqual(notification?.sessionID, sessionID)
+        XCTAssertEqual(notification?.workspaceSessionID, workspaceSessionID)
         XCTAssertEqual(notification?.kind, .permissionRequested)
         XCTAssertEqual(notification?.level, .warning)
         XCTAssertEqual(notification?.message, "Do you want to allow this command?")
         XCTAssertEqual(notificationStore.notifications.first?.source, .agent(notification?.id ?? UUID()))
         XCTAssertEqual(notificationStore.notifications.first?.level, .warning)
+        XCTAssertEqual(notificationStore.notifications.first?.routing.workspaceSessionID, workspaceSessionID)
     }
 
     @MainActor

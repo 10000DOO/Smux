@@ -251,6 +251,16 @@ extension PanelNode {
         return children.lazy.compactMap { $0.surface(forLeaf: panelID) }.first
     }
 
+    func panelID(containingWorkspaceSession sessionID: WorkspaceSession.ID) -> ID? {
+        if surface?.sessionID == sessionID, isLeaf {
+            return id
+        }
+
+        return children.lazy.compactMap {
+            $0.panelID(containingWorkspaceSession: sessionID)
+        }.first
+    }
+
     func replacingSurface(panelID: ID, with surface: PanelSurfaceDescriptor) -> PanelNode {
         guard id != panelID || isLeaf else {
             return self

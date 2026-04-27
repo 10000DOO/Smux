@@ -10,12 +10,12 @@ nonisolated struct PanelSurfacePresentation: Hashable {
         case .session:
             title = "Session"
             systemImage = "rectangle.inset.filled"
+            accessibilityLabel = "Session panel surface"
         case .empty:
-            title = "Workspace"
-            systemImage = "rectangle.split.3x1"
+            title = "New Panel"
+            systemImage = "plus.square"
+            accessibilityLabel = "New Panel surface"
         }
-
-        accessibilityLabel = "\(title) panel surface"
     }
 
     init(session: WorkspaceSession) {
