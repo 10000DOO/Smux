@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCommanding, PanelCommanding {
+final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, PanelCommanding {
     var workspaceStore: WorkspaceStore?
     var panelStore: PanelStore?
     var workspaceRepository: (any WorkspaceRepository)?
@@ -12,6 +12,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var documentTextStore: DocumentTextStore?
     var terminalSessionController: TerminalSessionController?
     var previewSessionStore: PreviewSessionStore?
+    var previewRenderCoordinator: (any PreviewRenderingCoordinating)?
     var workspaceSessionStore: WorkspaceSessionStore?
     var workspaceRuntimeStore: WorkspaceRuntimeStore?
 
@@ -28,6 +29,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentTextStore: DocumentTextStore? = nil,
         terminalSessionController: TerminalSessionController? = nil,
         previewSessionStore: PreviewSessionStore? = nil,
+        previewRenderCoordinator: (any PreviewRenderingCoordinating)? = nil,
         workspaceSessionStore: WorkspaceSessionStore? = nil,
         workspaceRuntimeStore: WorkspaceRuntimeStore? = nil
     ) {
@@ -41,8 +43,33 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.previewSessionStore = previewSessionStore
+        self.previewRenderCoordinator = previewRenderCoordinator
         self.workspaceSessionStore = workspaceSessionStore
         self.workspaceRuntimeStore = workspaceRuntimeStore
+    }
+
+    var sessionLifecycleController: WorkspaceSessionLifecycleController {
+        let sessionCreator = WorkspaceSessionCreator(
+            documentSessionStore: documentSessionStore,
+            terminalSessionController: terminalSessionController,
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore,
+            previewRenderCoordinator: previewRenderCoordinator
+        )
+        let panelAttacher = WorkspaceSessionPanelAttacher(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
+
+        return WorkspaceSessionLifecycleController(
+            workspaceStore: workspaceStore,
+            panelAttacher: panelAttacher,
+            sessionCreator: sessionCreator,
+            terminalSessionController: terminalSessionController,
+            previewSessionStore: previewSessionStore,
+            workspaceSessionStore: workspaceSessionStore
+        )
     }
 
     func openWorkspace(rootURL: URL) async throws {
@@ -191,20 +218,11 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         preferredSurface: DocumentOpenMode,
         replacingPanel panelID: PanelNode.ID?
     ) async throws {
-        let editorSession = try createDocumentSession(for: url)
-
-        switch preferredSurface {
-        case .editor:
-            replacePanel(with: .session(sessionID: editorSession.session.id), preferredPanelID: panelID)
-        case .preview:
-            replacePanel(with: createPreviewSurface(sourceDocumentID: editorSession.documentID), preferredPanelID: panelID)
-        case .split:
-            replacePanel(with: .session(sessionID: editorSession.session.id), preferredPanelID: panelID)
-            panelStore?.splitFocusedPanel(
-                direction: .horizontal,
-                surface: createPreviewSurface(sourceDocumentID: editorSession.documentID)
-            )
-        }
+        try await sessionLifecycleController.openDocument(
+            url,
+            preferredSurface: preferredSurface,
+            replacingPanel: panelID
+        )
     }
 
     func openDocumentInNewPanel(
@@ -212,20 +230,11 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         preferredSurface: DocumentOpenMode,
         splitDirection: SplitDirection
     ) async throws {
-        let editorSession = try createDocumentSession(for: url)
-
-        switch preferredSurface {
-        case .editor:
-            createPanel(splitDirection: splitDirection, surface: .session(sessionID: editorSession.session.id))
-        case .preview:
-            createPanel(splitDirection: splitDirection, surface: createPreviewSurface(sourceDocumentID: editorSession.documentID))
-        case .split:
-            createPanel(splitDirection: splitDirection, surface: .session(sessionID: editorSession.session.id))
-            panelStore?.splitFocusedPanel(
-                direction: .horizontal,
-                surface: createPreviewSurface(sourceDocumentID: editorSession.documentID)
-            )
-        }
+        try await sessionLifecycleController.openDocumentInNewPanel(
+            url,
+            preferredSurface: preferredSurface,
+            splitDirection: splitDirection
+        )
     }
 
     func createTerminal(in workspaceID: Workspace.ID) async throws {
@@ -237,26 +246,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID?) async throws {
-        guard let workspace = workspaceStore?.workspaces.first(where: { $0.id == workspaceID }) else {
-            throw WorkspaceCoordinatorError.workspaceNotFound
-        }
-
-        guard let session = try await terminalSessionController?.createSession(in: workspace, command: []) else {
-            let missingSession = WorkspaceSession(
-                workspaceID: workspace.id,
-                kind: .terminal,
-                content: .terminal(TerminalSession.ID()),
-                title: "Terminal",
-                createdAt: Date()
-            )
-            workspaceSessionStore?.upsertSession(missingSession)
-            replacePanel(with: .session(sessionID: missingSession.id), preferredPanelID: panelID)
-            return
-        }
-
-        let workspaceSession = WorkspaceSession(terminal: session)
-        workspaceSessionStore?.upsertSession(workspaceSession)
-        replacePanel(with: .session(sessionID: workspaceSession.id), preferredPanelID: panelID)
+        try await sessionLifecycleController.createTerminal(in: workspaceID, replacingPanel: panelID)
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
@@ -488,51 +478,6 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         }
     }
 
-    private func createDocumentSession(for url: URL) throws -> (session: WorkspaceSession, documentID: DocumentSession.ID) {
-        guard let workspace = workspaceStore?.activeWorkspace else {
-            throw WorkspaceCoordinatorError.missingActiveWorkspace
-        }
-
-        let documentID = DocumentSession.ID()
-        let session = DocumentSession.make(
-            id: documentID,
-            workspaceID: workspace.id,
-            url: url
-        )
-        documentSessionStore?.upsertSession(session)
-        let workspaceSession = WorkspaceSession(document: session)
-        workspaceSessionStore?.upsertSession(workspaceSession)
-
-        return (workspaceSession, documentID)
-    }
-
-    private func createPreviewSurface(sourceDocumentID documentID: DocumentSession.ID) -> PanelSurfaceDescriptor {
-        guard let workspace = workspaceStore?.activeWorkspace else {
-            return .empty
-        }
-
-        let previewID = PreviewState.ID()
-        previewSessionStore?.bind(previewID: previewID, sourceDocumentID: documentID)
-        let workspaceSession = WorkspaceSession(
-            id: WorkspaceSession.ID(),
-            workspaceID: workspace.id,
-            kind: .preview,
-            content: .preview(previewID: previewID, sourceDocumentID: documentID),
-            title: "Preview",
-            createdAt: Date()
-        )
-        workspaceSessionStore?.upsertSession(workspaceSession)
-        return .session(sessionID: workspaceSession.id)
-    }
-
-    private func replacePanel(with surface: PanelSurfaceDescriptor, preferredPanelID panelID: PanelNode.ID?) {
-        if let panelID, panelStore?.rootNode.containsLeaf(panelID: panelID) == true {
-            panelStore?.replacePanel(panelID: panelID, with: surface)
-            return
-        }
-
-        panelStore?.replaceFocusedPanel(with: surface)
-    }
 }
 
 enum WorkspaceCoordinatorError: LocalizedError, Equatable {

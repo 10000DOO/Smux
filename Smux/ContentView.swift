@@ -25,6 +25,7 @@ struct ContentView: View {
             documentFileWatchStore: appComposition.documentFileWatchStore,
             previewSessionStore: appComposition.previewSessionStore,
             previewPreferencesStore: appComposition.previewPreferencesStore,
+            previewRenderCoordinator: appComposition.previewRenderCoordinator,
             documentTextStore: appComposition.documentTextStore,
             terminalSessionController: appComposition.terminalSessionController,
             terminalOutputStore: appComposition.terminalOutputStore,
@@ -58,6 +59,7 @@ private final class AppComposition: ObservableObject {
     let documentFileWatchStore: DocumentFileWatchStore
     let previewSessionStore: PreviewSessionStore
     let previewPreferencesStore: PreviewPreferencesStore
+    let previewRenderCoordinator: PreviewRenderCoordinator
     let documentTextStore: DocumentTextStore
     let terminalSessionController: TerminalSessionController
     let terminalOutputStore: TerminalOutputStore
@@ -83,6 +85,12 @@ private final class AppComposition: ObservableObject {
         let previewSessionStore = PreviewSessionStore()
         let previewPreferencesStore = PreviewPreferencesStore()
         let documentTextStore = DocumentTextStore()
+        let previewSourceResolver = PreviewRenderSourceResolver(documentTextStore: documentTextStore)
+        let previewRenderCoordinator = PreviewRenderCoordinator(
+            documentSessionStore: documentSessionStore,
+            previewSessionStore: previewSessionStore,
+            sourceResolver: previewSourceResolver
+        )
         let terminalOutputStore = TerminalOutputStore()
         let terminalPreferencesStore = TerminalPreferencesStore()
         let workspaceSessionStore = WorkspaceSessionStore()
@@ -116,6 +124,7 @@ private final class AppComposition: ObservableObject {
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             previewSessionStore: previewSessionStore,
+            previewRenderCoordinator: previewRenderCoordinator,
             workspaceSessionStore: workspaceSessionStore,
             workspaceRuntimeStore: workspaceRuntimeStore
         )
@@ -128,6 +137,7 @@ private final class AppComposition: ObservableObject {
         self.documentFileWatchStore = documentFileWatchStore
         self.previewSessionStore = previewSessionStore
         self.previewPreferencesStore = previewPreferencesStore
+        self.previewRenderCoordinator = previewRenderCoordinator
         self.documentTextStore = documentTextStore
         self.terminalSessionController = terminalSessionController
         self.terminalOutputStore = terminalOutputStore
@@ -143,6 +153,7 @@ private final class AppComposition: ObservableObject {
             workspaceOpening: workspaceCoordinator,
             documentOpening: workspaceCoordinator,
             terminalCommanding: workspaceCoordinator,
+            workspaceSessionCreating: workspaceCoordinator,
             workspaceSessionCommanding: workspaceCoordinator,
             panelCommanding: workspaceCoordinator
         )

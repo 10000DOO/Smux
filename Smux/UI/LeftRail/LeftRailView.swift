@@ -12,6 +12,7 @@ struct LeftRailView: View {
     var isCollapsed = false
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
+    var onCreateSession: () -> Void = {}
     var onSelectSession: (WorkspaceSession.ID) -> Void = { _ in }
     var onCloseSession: (WorkspaceSession.ID) -> Void = { _ in }
     var onOpenWorkspace: () -> Void = {}
@@ -59,6 +60,7 @@ private extension LeftRailView {
                 .padding(.top, 10)
 
             railIconButton(systemImage: "plus", help: "Add workspace", action: onOpenWorkspace)
+            railIconButton(systemImage: "plus.square", help: "New session", action: onCreateSession)
 
             Divider()
                 .padding(.horizontal, 10)
@@ -154,6 +156,17 @@ private extension LeftRailView {
 
     var sessionSection: some View {
         railSection(title: "Sessions", count: sessionItems.count) {
+            Button(action: onCreateSession) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 20, height: 20)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("New session")
+            .accessibilityLabel("New session")
+        } content: {
             if sessionItems.isEmpty {
                 emptyLine("No sessions")
             } else {
@@ -334,6 +347,15 @@ private extension LeftRailView {
         count: Int?,
         @ViewBuilder content: () -> Content
     ) -> some View {
+        railSection(title: title, count: count, trailing: EmptyView.init, content: content)
+    }
+
+    func railSection<Content: View, Trailing: View>(
+        title: String,
+        count: Int?,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(title)
@@ -349,6 +371,8 @@ private extension LeftRailView {
                 }
 
                 Spacer()
+
+                trailing()
             }
 
             content()

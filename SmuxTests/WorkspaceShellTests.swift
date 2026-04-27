@@ -448,6 +448,18 @@ final class WorkspaceShellTests: XCTestCase {
         XCTAssertTrue(didOpenWorkspace)
     }
 
+    @MainActor
+    func testLeftRailCreateSessionCallbackCanBeInvoked() {
+        var didCreateSession = false
+        let view = LeftRailView(onCreateSession: {
+            didCreateSession = true
+        })
+
+        view.onCreateSession()
+
+        XCTAssertTrue(didCreateSession)
+    }
+
     func testTerminalAutoRefreshTrackerOnlyRefreshesTerminatedSessionOnce() {
         let sessionID = TerminalSession.ID()
         var tracker = TerminalAutoRefreshTracker()

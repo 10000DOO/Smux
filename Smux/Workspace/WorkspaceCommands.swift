@@ -55,6 +55,14 @@ protocol WorkspaceSessionCommanding {
     func closeSession(id: WorkspaceSession.ID)
 }
 
+@MainActor
+protocol WorkspaceSessionCreating {
+    func createSession(
+        _ request: WorkspaceSessionCreateRequest,
+        attachment: WorkspaceSessionAttachmentRequest?
+    ) async throws -> WorkspaceSession
+}
+
 extension WorkspaceSessionCommanding {
     func showSession(id: WorkspaceSession.ID) {
         showSession(id: id, replacingPanel: nil)
@@ -106,80 +114,22 @@ extension WorkspaceCoordinator {
         panelStore.closeFocusedPanel()
     }
 
-    func focusSession(id sessionID: WorkspaceSession.ID) {
-        guard activeWorkspaceSession(for: sessionID) != nil,
-              let panelID = panelStore?.rootNode.panelID(containingWorkspaceSession: sessionID) else {
-            return
-        }
+    func createSession(
+        _ request: WorkspaceSessionCreateRequest,
+        attachment: WorkspaceSessionAttachmentRequest?
+    ) async throws -> WorkspaceSession {
+        try await sessionLifecycleController.createSession(request, attachment: attachment)
+    }
 
-        panelStore?.focus(panelID: panelID)
+    func focusSession(id sessionID: WorkspaceSession.ID) {
+        sessionLifecycleController.focusSession(id: sessionID)
     }
 
     func showSession(id sessionID: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?) {
-        guard activeWorkspaceSession(for: sessionID) != nil else {
-            return
-        }
-
-        if let visiblePanelID = panelStore?.rootNode.panelID(containingWorkspaceSession: sessionID) {
-            panelStore?.focus(panelID: visiblePanelID)
-            return
-        }
-
-        let surface = PanelSurfaceDescriptor.session(sessionID: sessionID)
-
-        if let panelID,
-           panelStore?.rootNode.containsLeaf(panelID: panelID) == true,
-           panelStore?.rootNode.surface(forLeaf: panelID) == .empty {
-            panelStore?.replacePanel(panelID: panelID, with: surface)
-            return
-        }
-
-        if panelStore?.focusedSurface == .empty {
-            panelStore?.replaceFocusedPanel(with: surface)
-            return
-        }
-
-        panelStore?.createPanel(splitDirection: .horizontal, surface: surface)
+        sessionLifecycleController.showSession(id: sessionID, replacingPanel: panelID)
     }
 
     func closeSession(id sessionID: WorkspaceSession.ID) {
-        guard activeWorkspaceSession(for: sessionID) != nil else {
-            return
-        }
-
-        while let panelStore,
-              let panelID = panelStore.rootNode.panelID(containingWorkspaceSession: sessionID) {
-            panelStore.replacePanel(panelID: panelID, with: .empty)
-        }
-
-        cleanupDetachedWorkspaceSession(id: sessionID)
-    }
-
-    private func cleanupDetachedWorkspaceSession(id sessionID: WorkspaceSession.ID) {
-        guard let session = workspaceSessionStore?.session(for: sessionID) else {
-            return
-        }
-
-        switch session.content {
-        case .terminal(let terminalID):
-            terminalSessionController?.removeSession(sessionID: terminalID)
-            workspaceSessionStore?.removeSession(id: session.id)
-        case .preview(let previewID, _):
-            previewSessionStore?.removePreview(previewID: previewID)
-            workspaceSessionStore?.removeSession(id: session.id)
-        case .editor:
-            // Document content may be shared by preview sessions and text buffers.
-            workspaceSessionStore?.removeSession(id: session.id)
-        }
-    }
-
-    private func activeWorkspaceSession(for sessionID: WorkspaceSession.ID) -> WorkspaceSession? {
-        guard let session = workspaceSessionStore?.session(for: sessionID),
-              let activeWorkspaceID = workspaceStore?.activeWorkspace?.id,
-              session.workspaceID == activeWorkspaceID else {
-            return nil
-        }
-
-        return session
+        sessionLifecycleController.closeSession(id: sessionID)
     }
 }

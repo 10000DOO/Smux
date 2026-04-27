@@ -8,6 +8,7 @@ struct SplitPanelView: View {
     @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
+    var previewRenderCoordinator: any PreviewRenderingCoordinating
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
@@ -110,6 +111,7 @@ struct SplitPanelView: View {
             documentFileWatchStore: documentFileWatchStore,
             previewSessionStore: previewSessionStore,
             previewPreferencesStore: previewPreferencesStore,
+            previewRenderCoordinator: previewRenderCoordinator,
             documentTextStore: documentTextStore,
             terminalSessionController: terminalSessionController,
             terminalOutputStore: terminalOutputStore,
@@ -252,6 +254,7 @@ struct SplitPanelView: View {
                     documentSessionStore: documentSessionStore,
                     previewSessionStore: previewSessionStore,
                     previewPreferencesStore: previewPreferencesStore,
+                    previewRenderCoordinator: previewRenderCoordinator,
                     documentTextStore: documentTextStore
                 )
                 .id(sessionID)
@@ -928,11 +931,9 @@ private struct PreviewPanelSurfaceView: View {
     @ObservedObject var documentSessionStore: DocumentSessionStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
+    var previewRenderCoordinator: any PreviewRenderingCoordinating
     @ObservedObject var documentTextStore: DocumentTextStore
-    @State private var errorMessage: String?
     @State private var externalLinkMessage: String?
-    @State private var pipeline = MarkdownPreviewPipeline()
-    @State private var fileIO = FileBackedDocumentFileIO()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -940,7 +941,7 @@ private struct PreviewPanelSurfaceView: View {
                 session: sourceSession,
                 zoom: previewSessionStore.state(for: previewID)?.zoom ?? PreviewState.defaultZoom,
                 externalLinkPolicy: previewPreferencesStore.externalLinkPolicy,
-                errorMessage: errorMessage,
+                errorMessage: renderErrorMessage,
                 externalLinkMessage: externalLinkMessage,
                 onZoomOut: { updateZoom(by: -PreviewState.zoomStep) },
                 onResetZoom: { previewSessionStore.updateZoom(for: previewID, to: PreviewState.defaultZoom) },
@@ -957,7 +958,7 @@ private struct PreviewPanelSurfaceView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .task(id: renderToken) {
-            await renderPreview()
+            await previewRenderCoordinator.render(previewID: previewID)
         }
     }
 
@@ -973,61 +974,15 @@ private struct PreviewPanelSurfaceView: View {
         sourceDocumentID.flatMap { documentTextStore.snapshot(for: $0) }
     }
 
+    private var renderErrorMessage: String? {
+        previewSessionStore.state(for: previewID)?.errors.last?.message
+    }
+
     private var renderToken: String {
         let documentPart = sourceDocumentID?.uuidString ?? "missing-document"
         let versionPart = sourceSnapshot?.version ?? sourceSession?.textVersion ?? 0
         let textPart = sourceSnapshot?.text.hashValue ?? 0
         return "\(previewID.uuidString):\(documentPart):\(versionPart):\(textPart)"
-    }
-
-    private func renderPreview() async {
-        guard let sourceDocumentID else {
-            errorMessage = "Preview source document is unavailable."
-            previewSessionStore.removeState(for: previewID)
-            return
-        }
-
-        guard let sourceSession else {
-            let message = "Preview source document is unavailable."
-            errorMessage = message
-            previewSessionStore.upsertErrorState(
-                previewID: previewID,
-                sourceDocumentID: sourceDocumentID,
-                renderVersion: 0,
-                message: message
-            )
-            return
-        }
-
-        do {
-            let snapshot = try await currentTextSnapshot(for: sourceSession)
-            let state = try await pipeline.render(
-                documentID: sourceDocumentID,
-                text: snapshot.text,
-                version: snapshot.version
-            )
-            previewSessionStore.upsertState(state, for: previewID)
-            errorMessage = nil
-        } catch {
-            let message = error.localizedDescription
-            let version = sourceSnapshot?.version ?? sourceSession.textVersion
-            errorMessage = message
-            previewSessionStore.upsertErrorState(
-                previewID: previewID,
-                sourceDocumentID: sourceDocumentID,
-                renderVersion: version,
-                message: message
-            )
-        }
-    }
-
-    private func currentTextSnapshot(for session: DocumentSession) async throws -> DocumentTextSnapshot {
-        if let sourceSnapshot {
-            return sourceSnapshot
-        }
-
-        let loadedDocument = try await fileIO.loadText(from: session.url)
-        return DocumentTextSnapshot(text: loadedDocument.text, version: session.textVersion)
     }
 
     private func updateZoom(by delta: Double) {

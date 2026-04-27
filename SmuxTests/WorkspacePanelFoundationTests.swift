@@ -1650,6 +1650,55 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorCreateSessionAddsTerminalWithoutReplacingOccupiedFocusedPanel() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/SessionPlusWorkspace")
+        )
+        let existingSessionID = WorkspaceSession.ID()
+        let focusedPanelID = PanelNode.ID()
+        let panelStore = PanelStore(
+            rootNode: .leaf(id: focusedPanelID, surface: .session(sessionID: existingSessionID)),
+            focusedPanelID: focusedPanelID
+        )
+        let client = WorkspacePanelMockPTYClient(processID: 8642)
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: client)
+        )
+        let workspaceSessionStore = WorkspaceSessionStore(
+            sessions: [
+                existingSessionID: WorkspaceSession(
+                    id: existingSessionID,
+                    workspaceID: workspace.id,
+                    kind: .editor,
+                    content: .editor(DocumentSession.ID()),
+                    title: "README.md",
+                    createdAt: Date(timeIntervalSince1970: 0)
+                )
+            ],
+            orderedSessionIDs: [existingSessionID]
+        )
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore
+        )
+
+        let createdSession = try await coordinator.createSession(
+            WorkspaceSessionCreateRequest(workspaceID: workspace.id, kind: .terminal),
+            attachment: .automatic(replacingPanelID: focusedPanelID)
+        )
+
+        XCTAssertEqual(panelStore.rootNode.leafCount, 2)
+        XCTAssertEqual(panelStore.rootNode.children.first?.surface, .session(sessionID: existingSessionID))
+        XCTAssertEqual(panelStore.rootNode.children.last?.surface, .session(sessionID: createdSession.id))
+        XCTAssertEqual(panelStore.focusedPanelID, panelStore.rootNode.children.last?.id)
+        XCTAssertEqual(workspaceSessionStore.sessions(in: workspace.id).map(\.id), [existingSessionID, createdSession.id])
+        XCTAssertEqual(terminalSessionController.snapshotSessions(in: workspace.id).count, 1)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorReplacingTerminalPanelPreservesDetachedSession() async throws {
         let workspace = Workspace.make(
             id: UUID(),
@@ -2335,6 +2384,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             workspaceOpening: handler,
             documentOpening: handler,
             terminalCommanding: handler,
+            workspaceSessionCreating: handler,
             workspaceSessionCommanding: handler,
             panelCommanding: handler
         )
@@ -2344,6 +2394,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let closedWorkspaceID = Workspace.ID()
         let panelID = PanelNode.ID()
         let sessionID = WorkspaceSession.ID()
+        let createRequest = WorkspaceSessionCreateRequest(workspaceID: workspaceID, kind: .terminal)
+        let attachmentRequest = WorkspaceSessionAttachmentRequest.automatic(replacingPanelID: panelID)
         let splitSurface = PanelSurfaceDescriptor.empty
 
         try await router.openWorkspace(rootURL: rootURL)
@@ -2361,6 +2413,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         )
         try await router.createTerminal(in: workspaceID)
         try await router.createTerminal(in: workspaceID, replacingPanel: panelID)
+        _ = try await router.createSession(createRequest, attachment: attachmentRequest)
         router.focusSession(id: sessionID)
         router.showSession(id: sessionID, replacingPanel: panelID)
         router.closeSession(id: sessionID)
@@ -2381,6 +2434,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(handler.openedDocumentSplitDirection, .horizontal)
         XCTAssertEqual(handler.terminalWorkspaceID, workspaceID)
         XCTAssertEqual(handler.terminalPanelID, panelID)
+        XCTAssertEqual(handler.createdSessionRequest, createRequest)
+        XCTAssertEqual(handler.createdSessionAttachment, attachmentRequest)
         XCTAssertEqual(handler.focusedSessionID, sessionID)
         XCTAssertEqual(handler.shownSessionID, sessionID)
         XCTAssertEqual(handler.shownSessionPanelID, panelID)
@@ -2464,6 +2519,18 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             XCTFail("Expected missing terminal handler error.")
         } catch let error as AppCommandRouterError {
             XCTAssertEqual(error, .missingTerminalCommanding)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        do {
+            _ = try await router.createSession(
+                WorkspaceSessionCreateRequest(workspaceID: Workspace.ID(), kind: .terminal),
+                attachment: nil
+            )
+            XCTFail("Expected missing workspace session creation handler error.")
+        } catch let error as AppCommandRouterError {
+            XCTAssertEqual(error, .missingWorkspaceSessionCreating)
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -2624,7 +2691,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCommanding, PanelCommanding {
+    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, PanelCommanding {
         var openedRootURL: URL?
         var closedWorkspaceID: Workspace.ID?
         var openedDocumentURL: URL?
@@ -2633,6 +2700,8 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var openedDocumentSplitDirection: SplitDirection?
         var terminalWorkspaceID: Workspace.ID?
         var terminalPanelID: PanelNode.ID?
+        var createdSessionRequest: WorkspaceSessionCreateRequest?
+        var createdSessionAttachment: WorkspaceSessionAttachmentRequest?
         var focusedSessionID: WorkspaceSession.ID?
         var shownSessionID: WorkspaceSession.ID?
         var shownSessionPanelID: PanelNode.ID?
@@ -2692,6 +2761,21 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID) async throws {
             terminalWorkspaceID = workspaceID
             terminalPanelID = panelID
+        }
+
+        func createSession(
+            _ request: WorkspaceSessionCreateRequest,
+            attachment: WorkspaceSessionAttachmentRequest?
+        ) async throws -> WorkspaceSession {
+            createdSessionRequest = request
+            createdSessionAttachment = attachment
+            return WorkspaceSession(
+                workspaceID: request.workspaceID,
+                kind: .terminal,
+                content: .terminal(TerminalSession.ID()),
+                title: "Terminal",
+                createdAt: Date(timeIntervalSince1970: 0)
+            )
         }
 
         func focusSession(id sessionID: WorkspaceSession.ID) {

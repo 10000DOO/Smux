@@ -5,6 +5,7 @@ struct AppCommandRouter {
     var workspaceOpening: (any WorkspaceOpening)?
     var documentOpening: (any DocumentOpening)?
     var terminalCommanding: (any TerminalCommanding)?
+    var workspaceSessionCreating: (any WorkspaceSessionCreating)?
     var workspaceSessionCommanding: (any WorkspaceSessionCommanding)?
     var panelCommanding: (any PanelCommanding)?
 
@@ -80,6 +81,17 @@ struct AppCommandRouter {
         try await terminalCommanding.createTerminal(in: workspaceID, replacingPanel: Optional(panelID))
     }
 
+    func createSession(
+        _ request: WorkspaceSessionCreateRequest,
+        attachment: WorkspaceSessionAttachmentRequest?
+    ) async throws -> WorkspaceSession {
+        guard let workspaceSessionCreating else {
+            throw AppCommandRouterError.missingWorkspaceSessionCreating
+        }
+
+        return try await workspaceSessionCreating.createSession(request, attachment: attachment)
+    }
+
     func focusSession(id sessionID: WorkspaceSession.ID) {
         workspaceSessionCommanding?.focusSession(id: sessionID)
     }
@@ -129,4 +141,5 @@ enum AppCommandRouterError: Error, Equatable {
     case missingWorkspaceOpening
     case missingDocumentOpening
     case missingTerminalCommanding
+    case missingWorkspaceSessionCreating
 }

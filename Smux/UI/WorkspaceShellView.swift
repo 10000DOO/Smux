@@ -10,6 +10,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var documentFileWatchStore: DocumentFileWatchStore
     @ObservedObject var previewSessionStore: PreviewSessionStore
     @ObservedObject var previewPreferencesStore: PreviewPreferencesStore
+    var previewRenderCoordinator: any PreviewRenderingCoordinating
     @ObservedObject var documentTextStore: DocumentTextStore
     @ObservedObject var terminalSessionController: TerminalSessionController
     @ObservedObject var terminalOutputStore: TerminalOutputStore
@@ -35,6 +36,7 @@ struct WorkspaceShellView: View {
                 isCollapsed: isLeftRailCollapsed,
                 onExpandFileTreeNode: expandFileTreeNode,
                 onSelectFileTreeNode: selectFileTreeNode,
+                onCreateSession: createSession,
                 onSelectSession: selectSession,
                 onCloseSession: closeSession,
                 onOpenWorkspace: onOpenWorkspace,
@@ -60,6 +62,7 @@ struct WorkspaceShellView: View {
                 documentFileWatchStore: documentFileWatchStore,
                 previewSessionStore: previewSessionStore,
                 previewPreferencesStore: previewPreferencesStore,
+                previewRenderCoordinator: previewRenderCoordinator,
                 documentTextStore: documentTextStore,
                 terminalSessionController: terminalSessionController,
                 terminalOutputStore: terminalOutputStore,
@@ -383,6 +386,24 @@ private extension WorkspaceShellView {
 
     func selectSession(id sessionID: WorkspaceSession.ID) {
         commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
+    }
+
+    func createSession() {
+        guard let workspaceID = workspaceStore.activeWorkspace?.id else {
+            workspaceStore.openErrorMessage = "No workspace is currently active."
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await commandRouter.createSession(
+                    WorkspaceSessionCreateRequest(workspaceID: workspaceID, kind: .terminal),
+                    attachment: .automatic(replacingPanelID: panelStore.focusedPanelID)
+                )
+            } catch {
+                workspaceStore.openErrorMessage = "Failed to create session: \(error.localizedDescription)"
+            }
+        }
     }
 
     func closeSession(id sessionID: WorkspaceSession.ID) {
