@@ -7,6 +7,7 @@ struct AppCommandRouter {
     var terminalCommanding: (any TerminalCommanding)?
     var workspaceSessionCreating: (any WorkspaceSessionCreating)?
     var workspaceSessionCommanding: (any WorkspaceSessionCommanding)?
+    var workspaceLayoutSessionCommanding: (any WorkspaceLayoutSessionCommanding)? = nil
     var panelCommanding: (any PanelCommanding)?
 
     func openWorkspace(rootURL: URL) async throws {
@@ -102,6 +103,18 @@ struct AppCommandRouter {
 
     func closeSession(id sessionID: WorkspaceSession.ID) {
         workspaceSessionCommanding?.closeSession(id: sessionID)
+    }
+
+    func createLayoutSession() {
+        workspaceLayoutSessionCommanding?.createLayoutSession()
+    }
+
+    func selectLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+        workspaceLayoutSessionCommanding?.selectLayoutSession(id: sessionID)
+    }
+
+    func closeLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+        workspaceLayoutSessionCommanding?.closeLayoutSession(id: sessionID)
     }
 
     func focus(panelID: PanelNode.ID?) {

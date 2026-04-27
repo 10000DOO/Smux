@@ -31,6 +31,7 @@ struct ContentView: View {
             terminalOutputStore: appComposition.terminalOutputStore,
             terminalPreferencesStore: appComposition.terminalPreferencesStore,
             workspaceSessionStore: appComposition.workspaceSessionStore,
+            workspaceLayoutSessionStore: appComposition.workspaceLayoutSessionStore,
             commandRouter: appComposition.commandRouter,
             onOpenWorkspace: {
                 appComposition.workspaceStore.clearOpenError()
@@ -65,6 +66,7 @@ private final class AppComposition: ObservableObject {
     let terminalOutputStore: TerminalOutputStore
     let terminalPreferencesStore: TerminalPreferencesStore
     let workspaceSessionStore: WorkspaceSessionStore
+    let workspaceLayoutSessionStore: WorkspaceLayoutSessionStore
     let workspaceRuntimeStore: WorkspaceRuntimeStore
     let agentStateStore: AgentStateStore
     let agentTerminalOutputMonitor: AgentTerminalOutputMonitor
@@ -94,6 +96,7 @@ private final class AppComposition: ObservableObject {
         let terminalOutputStore = TerminalOutputStore()
         let terminalPreferencesStore = TerminalPreferencesStore()
         let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceLayoutSessionStore = WorkspaceLayoutSessionStore()
         let workspaceRuntimeStore = WorkspaceRuntimeStore()
         let agentStateStore = AgentStateStore()
         let agentTerminalOutputMonitor = AgentTerminalOutputMonitor(
@@ -126,6 +129,7 @@ private final class AppComposition: ObservableObject {
             previewSessionStore: previewSessionStore,
             previewRenderCoordinator: previewRenderCoordinator,
             workspaceSessionStore: workspaceSessionStore,
+            workspaceLayoutSessionStore: workspaceLayoutSessionStore,
             workspaceRuntimeStore: workspaceRuntimeStore
         )
 
@@ -143,6 +147,7 @@ private final class AppComposition: ObservableObject {
         self.terminalOutputStore = terminalOutputStore
         self.terminalPreferencesStore = terminalPreferencesStore
         self.workspaceSessionStore = workspaceSessionStore
+        self.workspaceLayoutSessionStore = workspaceLayoutSessionStore
         self.workspaceRuntimeStore = workspaceRuntimeStore
         self.agentStateStore = agentStateStore
         self.agentTerminalOutputMonitor = agentTerminalOutputMonitor
@@ -155,6 +160,7 @@ private final class AppComposition: ObservableObject {
             terminalCommanding: workspaceCoordinator,
             workspaceSessionCreating: workspaceCoordinator,
             workspaceSessionCommanding: workspaceCoordinator,
+            workspaceLayoutSessionCommanding: workspaceCoordinator,
             panelCommanding: workspaceCoordinator
         )
         systemNotificationDeliverer.prepare { [logger] result in

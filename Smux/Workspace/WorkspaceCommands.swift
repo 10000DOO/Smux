@@ -56,6 +56,13 @@ protocol WorkspaceSessionCommanding {
 }
 
 @MainActor
+protocol WorkspaceLayoutSessionCommanding {
+    func createLayoutSession()
+    func selectLayoutSession(id: WorkspaceLayoutSession.ID)
+    func closeLayoutSession(id: WorkspaceLayoutSession.ID)
+}
+
+@MainActor
 protocol WorkspaceSessionCreating {
     func createSession(
         _ request: WorkspaceSessionCreateRequest,
@@ -84,26 +91,32 @@ protocol PanelCommanding {
 extension WorkspaceCoordinator {
     func focus(panelID: PanelNode.ID?) {
         panelStore?.focus(panelID: panelID)
+        persistActiveLayoutSessionPanelState()
     }
 
     func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
         panelStore?.createPanel(splitDirection: splitDirection, surface: surface)
+        persistActiveLayoutSessionPanelState()
     }
 
     func splitPanel(panelID: PanelNode.ID, direction: SplitDirection, surface: PanelSurfaceDescriptor) {
         panelStore?.splitPanel(panelID: panelID, direction: direction, surface: surface)
+        persistActiveLayoutSessionPanelState()
     }
 
     func updateSplitRatio(splitID: PanelNode.ID, ratio: Double) {
         panelStore?.updateSplitRatio(splitID: splitID, ratio: ratio)
+        persistActiveLayoutSessionPanelState()
     }
 
     func focusNextPanel() {
         panelStore?.focusNextPanel()
+        persistActiveLayoutSessionPanelState()
     }
 
     func focusPreviousPanel() {
         panelStore?.focusPreviousPanel()
+        persistActiveLayoutSessionPanelState()
     }
 
     func closeFocusedPanel() {
@@ -112,24 +125,30 @@ extension WorkspaceCoordinator {
         }
 
         panelStore.closeFocusedPanel()
+        persistActiveLayoutSessionPanelState()
     }
 
     func createSession(
         _ request: WorkspaceSessionCreateRequest,
         attachment: WorkspaceSessionAttachmentRequest?
     ) async throws -> WorkspaceSession {
-        try await sessionLifecycleController.createSession(request, attachment: attachment)
+        let session = try await sessionLifecycleController.createSession(request, attachment: attachment)
+        persistActiveLayoutSessionPanelState()
+        return session
     }
 
     func focusSession(id sessionID: WorkspaceSession.ID) {
         sessionLifecycleController.focusSession(id: sessionID)
+        persistActiveLayoutSessionPanelState()
     }
 
     func showSession(id sessionID: WorkspaceSession.ID, replacingPanel panelID: PanelNode.ID?) {
         sessionLifecycleController.showSession(id: sessionID, replacingPanel: panelID)
+        persistActiveLayoutSessionPanelState()
     }
 
     func closeSession(id sessionID: WorkspaceSession.ID) {
         sessionLifecycleController.closeSession(id: sessionID)
+        persistActiveLayoutSessionPanelState()
     }
 }

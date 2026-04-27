@@ -1,12 +1,14 @@
 import Foundation
 
 nonisolated struct WorkspaceSnapshot: Codable, Hashable {
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var schemaVersion: Int
     var workspaceID: Workspace.ID
     var rootBookmark: Data?
     var panelTree: PanelNode?
+    var layoutSessions: [WorkspaceLayoutSession]
+    var activeLayoutSessionID: WorkspaceLayoutSession.ID?
     var workspaceSessions: [WorkspaceSession]
     var sessions: [TerminalSession]
     var documents: [DocumentSession]
@@ -24,6 +26,8 @@ extension WorkspaceSnapshot {
     init(
         workspace: Workspace,
         panelTree: PanelNode?,
+        layoutSessions: [WorkspaceLayoutSession]? = nil,
+        activeLayoutSessionID: WorkspaceLayoutSession.ID? = nil,
         workspaceSessions: [WorkspaceSession]? = nil,
         sessions: [TerminalSession] = [],
         documents: [DocumentSession] = [],
@@ -34,6 +38,12 @@ extension WorkspaceSnapshot {
         self.workspaceID = workspace.id
         self.rootBookmark = workspace.securityBookmark
         self.panelTree = panelTree
+        self.layoutSessions = layoutSessions ?? Self.migratedLayoutSessions(
+            workspaceID: workspace.id,
+            panelTree: panelTree,
+            focusedPanelID: leftRailState?.selectedPanelID ?? panelTree?.firstLeafID
+        )
+        self.activeLayoutSessionID = activeLayoutSessionID ?? self.layoutSessions.first?.id
         self.workspaceSessions = workspaceSessions ?? Self.migratedWorkspaceSessions(
             sessions: sessions,
             documents: documents,
@@ -50,6 +60,23 @@ extension WorkspaceSnapshot {
 }
 
 extension WorkspaceSnapshot {
+    nonisolated static func migratedLayoutSessions(
+        workspaceID: Workspace.ID,
+        panelTree: PanelNode?,
+        focusedPanelID: PanelNode.ID?
+    ) -> [WorkspaceLayoutSession] {
+        [
+            WorkspaceLayoutSession(
+                workspaceID: workspaceID,
+                title: "Session 1",
+                panelTree: panelTree ?? .leaf(surface: .empty),
+                focusedPanelID: focusedPanelID,
+                createdAt: migratedSessionTimestamp,
+                lastActiveAt: migratedSessionTimestamp
+            )
+        ]
+    }
+
     nonisolated static func migratedWorkspaceSessions(
         sessions: [TerminalSession],
         documents: [DocumentSession],
@@ -80,6 +107,8 @@ extension WorkspaceSnapshot {
         case workspaceID
         case rootBookmark
         case panelTree
+        case layoutSessions
+        case activeLayoutSessionID
         case workspaceSessions
         case sessions
         case documents
@@ -94,6 +123,19 @@ extension WorkspaceSnapshot {
         workspaceID = try container.decode(Workspace.ID.self, forKey: .workspaceID)
         rootBookmark = try container.decodeIfPresent(Data.self, forKey: .rootBookmark)
         panelTree = try container.decodeIfPresent(PanelNode.self, forKey: .panelTree)
+        leftRailState = try container.decode(LeftRailState.self, forKey: .leftRailState)
+        layoutSessions = try container.decodeIfPresent(
+            [WorkspaceLayoutSession].self,
+            forKey: .layoutSessions
+        ) ?? Self.migratedLayoutSessions(
+            workspaceID: workspaceID,
+            panelTree: panelTree,
+            focusedPanelID: leftRailState.selectedPanelID ?? panelTree?.firstLeafID
+        )
+        activeLayoutSessionID = try container.decodeIfPresent(
+            WorkspaceLayoutSession.ID.self,
+            forKey: .activeLayoutSessionID
+        ) ?? layoutSessions.first?.id
         sessions = try container.decodeIfPresent([TerminalSession].self, forKey: .sessions) ?? []
         documents = try container.decodeIfPresent([DocumentSession].self, forKey: .documents) ?? []
         previews = try container.decodeIfPresent([PreviewState].self, forKey: .previews) ?? []
@@ -105,7 +147,6 @@ extension WorkspaceSnapshot {
             documents: documents,
             previews: previews
         )
-        leftRailState = try container.decode(LeftRailState.self, forKey: .leftRailState)
     }
 }
 

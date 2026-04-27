@@ -1,7 +1,7 @@
 import Foundation
 
 @MainActor
-final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, PanelCommanding {
+final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, WorkspaceLayoutSessionCommanding, PanelCommanding {
     var workspaceStore: WorkspaceStore?
     var panelStore: PanelStore?
     var workspaceRepository: (any WorkspaceRepository)?
@@ -14,6 +14,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     var previewSessionStore: PreviewSessionStore?
     var previewRenderCoordinator: (any PreviewRenderingCoordinating)?
     var workspaceSessionStore: WorkspaceSessionStore?
+    var workspaceLayoutSessionStore: WorkspaceLayoutSessionStore?
     var workspaceRuntimeStore: WorkspaceRuntimeStore?
 
     private var workspaceIDsPendingSnapshotRetry: Set<Workspace.ID> = []
@@ -31,6 +32,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         previewSessionStore: PreviewSessionStore? = nil,
         previewRenderCoordinator: (any PreviewRenderingCoordinating)? = nil,
         workspaceSessionStore: WorkspaceSessionStore? = nil,
+        workspaceLayoutSessionStore: WorkspaceLayoutSessionStore? = nil,
         workspaceRuntimeStore: WorkspaceRuntimeStore? = nil
     ) {
         self.workspaceStore = workspaceStore
@@ -45,6 +47,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         self.previewSessionStore = previewSessionStore
         self.previewRenderCoordinator = previewRenderCoordinator
         self.workspaceSessionStore = workspaceSessionStore
+        self.workspaceLayoutSessionStore = workspaceLayoutSessionStore
         self.workspaceRuntimeStore = workspaceRuntimeStore
     }
 
@@ -223,6 +226,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             preferredSurface: preferredSurface,
             replacingPanel: panelID
         )
+        persistActiveLayoutSessionPanelState()
     }
 
     func openDocumentInNewPanel(
@@ -235,6 +239,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             preferredSurface: preferredSurface,
             splitDirection: splitDirection
         )
+        persistActiveLayoutSessionPanelState()
     }
 
     func createTerminal(in workspaceID: Workspace.ID) async throws {
@@ -247,22 +252,92 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
 
     func createTerminal(in workspaceID: Workspace.ID, replacingPanel panelID: PanelNode.ID?) async throws {
         try await sessionLifecycleController.createTerminal(in: workspaceID, replacingPanel: panelID)
+        persistActiveLayoutSessionPanelState()
     }
 
     func splitFocusedPanel(direction: SplitDirection, surface: PanelSurfaceDescriptor) {
         panelStore?.splitFocusedPanel(direction: direction, surface: surface)
+        persistActiveLayoutSessionPanelState()
+    }
+
+    func createLayoutSession() {
+        guard let workspaceID = workspaceStore?.activeWorkspace?.id,
+              let panelStore,
+              let workspaceLayoutSessionStore else {
+            return
+        }
+
+        persistActiveLayoutSessionPanelState()
+        let session = workspaceLayoutSessionStore.createSession(
+            in: workspaceID,
+            panelTree: .leaf(surface: .empty)
+        )
+        panelStore.reset(to: session.panelTree)
+        if let focusedPanelID = session.focusedPanelID {
+            panelStore.focus(panelID: focusedPanelID)
+        }
+        persistActiveLayoutSessionPanelState()
+    }
+
+    func selectLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+        guard let panelStore,
+              let workspaceLayoutSessionStore,
+              let session = workspaceLayoutSessionStore.session(for: sessionID),
+              workspaceStore?.activeWorkspace?.id == session.workspaceID else {
+            return
+        }
+
+        persistActiveLayoutSessionPanelState()
+        workspaceLayoutSessionStore.activateSession(id: session.id)
+        panelStore.reset(to: session.panelTree)
+        if let focusedPanelID = session.focusedPanelID {
+            panelStore.focus(panelID: focusedPanelID)
+        }
+    }
+
+    func closeLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+        guard let panelStore,
+              let workspaceLayoutSessionStore,
+              let session = workspaceLayoutSessionStore.session(for: sessionID),
+              workspaceStore?.activeWorkspace?.id == session.workspaceID else {
+            return
+        }
+
+        let wasActiveSession = workspaceLayoutSessionStore.activeSessionID(in: session.workspaceID) == sessionID
+        for workspaceSessionID in session.panelTree.workspaceSessionIDs {
+            sessionLifecycleController.closeSession(id: workspaceSessionID)
+        }
+        _ = workspaceLayoutSessionStore.removeSession(id: sessionID)
+
+        if workspaceLayoutSessionStore.sessions(in: session.workspaceID).isEmpty {
+            _ = workspaceLayoutSessionStore.createSession(in: session.workspaceID)
+        }
+
+        if wasActiveSession,
+           let activeSession = workspaceLayoutSessionStore.activeSession(in: session.workspaceID) {
+            panelStore.reset(to: activeSession.panelTree)
+            if let focusedPanelID = activeSession.focusedPanelID {
+                panelStore.focus(panelID: focusedPanelID)
+            }
+        }
+
+        persistActiveLayoutSessionPanelState()
     }
 
     private func saveSnapshot(for workspace: Workspace) async throws {
+        persistActiveLayoutSessionPanelState(workspaceID: workspace.id)
         let documents = documentSessionStore?.snapshotSessions(in: workspace.id) ?? []
         let documentIDs = Set(documents.map(\.id))
         let runtimeState = workspaceRuntimeStore?.state(for: workspace.id)
         let isActiveWorkspace = workspaceStore?.activeWorkspace?.id == workspace.id
         let panelTree = isActiveWorkspace ? panelStore?.rootNode : runtimeState?.panelTree
         let focusedPanelID = isActiveWorkspace ? panelStore?.focusedPanelID : runtimeState?.focusedPanelID
+        let layoutSessions = workspaceLayoutSessionStore?.snapshotSessions(in: workspace.id)
         let snapshot = WorkspaceSnapshot(
             workspace: workspace,
             panelTree: panelTree,
+            layoutSessions: layoutSessions,
+            activeLayoutSessionID: workspaceLayoutSessionStore?.activeSessionID(in: workspace.id),
             workspaceSessions: workspaceSessionStore?.snapshotSessions(in: workspace.id),
             sessions: terminalSessionController?.snapshotSessions(in: workspace.id) ?? [],
             documents: documents,
@@ -297,16 +372,25 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         restoreSnapshotState(snapshot, workspaceID: workspaceID)
 
         if let panelStore {
-            let panelTree = snapshot?.panelTree ?? .placeholder
+            workspaceLayoutSessionStore?.replaceSessions(
+                in: workspaceID,
+                with: snapshot?.layoutSessions ?? [],
+                activeSessionID: snapshot?.activeLayoutSessionID,
+                fallbackPanelTree: snapshot?.panelTree ?? .placeholder,
+                fallbackFocusedPanelID: snapshot?.leftRailState.selectedPanelID
+            )
+            let activeLayoutSession = workspaceLayoutSessionStore?.activeSession(in: workspaceID)
+            let panelTree = activeLayoutSession?.panelTree ?? snapshot?.panelTree ?? .placeholder
             panelStore.reset(to: panelTree)
 
-            if let selectedPanelID = snapshot?.leftRailState.selectedPanelID {
+            if let selectedPanelID = activeLayoutSession?.focusedPanelID ?? snapshot?.leftRailState.selectedPanelID {
                 panelStore.focus(panelID: selectedPanelID)
             }
 
             if shouldParkRestoredSnapshot {
                 workspaceRuntimeStore?.park(
                     workspaceID: workspaceID,
+                    activeLayoutSessionID: workspaceLayoutSessionStore?.activeSessionID(in: workspaceID),
                     panelTree: panelStore.rootNode,
                     focusedPanelID: panelStore.focusedPanelID
                 )
@@ -315,9 +399,20 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
     }
 
     private func restoreRuntimeState(_ runtimeState: WorkspaceRuntimeState) {
-        panelStore?.reset(to: runtimeState.panelTree)
+        if let activeLayoutSessionID = runtimeState.activeLayoutSessionID {
+            workspaceLayoutSessionStore?.activateSession(id: activeLayoutSessionID)
+        } else {
+            workspaceLayoutSessionStore?.ensureActiveSession(
+                in: runtimeState.workspaceID,
+                panelTree: runtimeState.panelTree,
+                focusedPanelID: runtimeState.focusedPanelID
+            )
+        }
 
-        if let focusedPanelID = runtimeState.focusedPanelID {
+        let activeLayoutSession = workspaceLayoutSessionStore?.activeSession(in: runtimeState.workspaceID)
+        panelStore?.reset(to: activeLayoutSession?.panelTree ?? runtimeState.panelTree)
+
+        if let focusedPanelID = activeLayoutSession?.focusedPanelID ?? runtimeState.focusedPanelID {
             panelStore?.focus(panelID: focusedPanelID)
         }
     }
@@ -344,8 +439,10 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             return
         }
 
+        persistActiveLayoutSessionPanelState(workspaceID: workspaceID)
         workspaceRuntimeStore?.park(
             workspaceID: workspaceID,
+            activeLayoutSessionID: workspaceLayoutSessionStore?.activeSessionID(in: workspaceID),
             panelTree: panelStore.rootNode,
             focusedPanelID: panelStore.focusedPanelID
         )
@@ -360,6 +457,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         documentSessionStore?.removeSessions(in: workspaceID)
         documentTextStore?.removeSnapshots(for: documentIDs)
         workspaceSessionStore?.removeSessions(in: workspaceID)
+        workspaceLayoutSessionStore?.removeSessions(in: workspaceID)
         workspaceRuntimeStore?.removeState(for: workspaceID)
         workspaceIDsPendingSnapshotRetry.remove(workspaceID)
     }
@@ -394,10 +492,15 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             from: sourceWorkspaceID,
             to: targetWorkspaceID
         )
+        workspaceLayoutSessionStore?.moveSessions(
+            from: sourceWorkspaceID,
+            to: targetWorkspaceID
+        )
 
         if let runtimeState {
             workspaceRuntimeStore?.park(
                 workspaceID: targetWorkspaceID,
+                activeLayoutSessionID: runtimeState.activeLayoutSessionID,
                 panelTree: runtimeState.panelTree,
                 focusedPanelID: runtimeState.focusedPanelID
             )
@@ -416,6 +519,7 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         if workspaceStore?.activeWorkspace?.id == sourceWorkspaceID, let panelStore {
             return WorkspaceRuntimeState(
                 workspaceID: targetWorkspaceID,
+                activeLayoutSessionID: workspaceLayoutSessionStore?.activeSessionID(in: sourceWorkspaceID),
                 panelTree: panelStore.rootNode,
                 focusedPanelID: panelStore.focusedPanelID
             )
@@ -442,6 +546,10 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
             return true
         }
 
+        if workspaceLayoutSessionStore?.snapshotSessions(in: workspaceID).isEmpty == false {
+            return true
+        }
+
         return workspaceSessionStore?.snapshotSessions(in: workspaceID).isEmpty == false
     }
 
@@ -465,8 +573,33 @@ final class WorkspaceCoordinator: WorkspaceOpening, DocumentOpening, TerminalCom
         if let runtimeState = workspaceRuntimeStore?.state(for: activeWorkspace.id) {
             restoreRuntimeState(runtimeState)
         } else {
-            panelStore?.reset(to: .placeholder)
+            let activeLayoutSession = workspaceLayoutSessionStore?.ensureActiveSession(in: activeWorkspace.id)
+            panelStore?.reset(to: activeLayoutSession?.panelTree ?? .placeholder)
+            if let focusedPanelID = activeLayoutSession?.focusedPanelID {
+                panelStore?.focus(panelID: focusedPanelID)
+            }
         }
+    }
+
+    func persistActiveLayoutSessionPanelState() {
+        guard let workspaceID = workspaceStore?.activeWorkspace?.id else {
+            return
+        }
+
+        persistActiveLayoutSessionPanelState(workspaceID: workspaceID)
+    }
+
+    private func persistActiveLayoutSessionPanelState(workspaceID: Workspace.ID) {
+        guard workspaceStore?.activeWorkspace?.id == workspaceID,
+              let panelStore else {
+            return
+        }
+
+        workspaceLayoutSessionStore?.updateActiveSession(
+            in: workspaceID,
+            panelTree: panelStore.rootNode,
+            focusedPanelID: panelStore.focusedPanelID
+        )
     }
 
     private func currentGitBranch(for rootURL: URL) async -> String? {

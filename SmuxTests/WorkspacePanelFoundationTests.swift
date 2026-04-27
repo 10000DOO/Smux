@@ -552,6 +552,63 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertNil(store.openErrorMessage)
     }
 
+    @MainActor
+    func testWorkspaceLayoutSessionStoreCreatesAndActivatesSessionsPerWorkspace() {
+        let workspaceID = Workspace.ID()
+        let firstPanelID = PanelNode.ID()
+        let secondPanelID = PanelNode.ID()
+        let store = WorkspaceLayoutSessionStore()
+
+        let firstSession = store.ensureActiveSession(
+            in: workspaceID,
+            panelTree: .leaf(id: firstPanelID, surface: .empty),
+            focusedPanelID: firstPanelID
+        )
+        let secondSession = store.createSession(
+            in: workspaceID,
+            panelTree: .leaf(id: secondPanelID, surface: .empty),
+            focusedPanelID: secondPanelID
+        )
+
+        XCTAssertEqual(store.sessions(in: workspaceID).map(\.title), ["Session 1", "Session 2"])
+        XCTAssertEqual(store.activeSessionID(in: workspaceID), secondSession.id)
+
+        store.activateSession(id: firstSession.id)
+
+        XCTAssertEqual(store.activeSessionID(in: workspaceID), firstSession.id)
+    }
+
+    @MainActor
+    func testWorkspaceLayoutSessionStoreUpdatesActivePanelState() {
+        let workspaceID = Workspace.ID()
+        let panelID = PanelNode.ID()
+        let updatedTree = PanelNode.leaf(id: panelID, surface: .empty)
+        let store = WorkspaceLayoutSessionStore()
+
+        let session = store.ensureActiveSession(in: workspaceID)
+        store.updateActiveSession(
+            in: workspaceID,
+            panelTree: updatedTree,
+            focusedPanelID: panelID
+        )
+
+        XCTAssertEqual(store.session(for: session.id)?.panelTree, updatedTree)
+        XCTAssertEqual(store.session(for: session.id)?.focusedPanelID, panelID)
+    }
+
+    @MainActor
+    func testWorkspaceLayoutSessionStoreCreatesFreshDefaultPanelPerSession() {
+        let workspaceID = Workspace.ID()
+        let store = WorkspaceLayoutSessionStore()
+
+        let firstSession = store.createSession(in: workspaceID)
+        let secondSession = store.createSession(in: workspaceID)
+
+        XCTAssertNotEqual(firstSession.panelTree.id, secondSession.panelTree.id)
+        XCTAssertEqual(firstSession.panelTree.firstLeafID, firstSession.focusedPanelID)
+        XCTAssertEqual(secondSession.panelTree.firstLeafID, secondSession.focusedPanelID)
+    }
+
     func testWorkspaceSnapshotRoundTripsPanelTreeAndSurfaceDescriptors() throws {
         let workspaceID = UUID()
         let firstPanelID = UUID()
@@ -582,6 +639,45 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(decoded.leftRailState.selectedWorkspaceID, workspaceID)
         XCTAssertEqual(decoded.leftRailState.selectedPanelID, firstPanelID)
         XCTAssertTrue(decoded.leftRailState.isFileTreeVisible)
+    }
+
+    func testWorkspaceSnapshotRoundTripsLayoutSessions() throws {
+        let workspaceID = Workspace.ID()
+        let activePanelID = PanelNode.ID()
+        let inactivePanelID = PanelNode.ID()
+        let activeLayoutSession = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
+            workspaceID: workspaceID,
+            title: "Session 1",
+            panelTree: .leaf(id: activePanelID, surface: .empty),
+            focusedPanelID: activePanelID,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let inactiveLayoutSession = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
+            workspaceID: workspaceID,
+            title: "Session 2",
+            panelTree: .leaf(id: inactivePanelID, surface: .empty),
+            focusedPanelID: inactivePanelID,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let workspace = Workspace.make(
+            id: workspaceID,
+            rootURL: URL(fileURLWithPath: "/tmp/LayoutSnapshot")
+        )
+        let snapshot = WorkspaceSnapshot(
+            workspace: workspace,
+            panelTree: activeLayoutSession.panelTree,
+            layoutSessions: [activeLayoutSession, inactiveLayoutSession],
+            activeLayoutSessionID: inactiveLayoutSession.id
+        )
+
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self, from: data)
+
+        XCTAssertEqual(decoded.layoutSessions, [activeLayoutSession, inactiveLayoutSession])
+        XCTAssertEqual(decoded.activeLayoutSessionID, inactiveLayoutSession.id)
+        XCTAssertEqual(decoded.panelTree, activeLayoutSession.panelTree)
     }
 
     func testWorkspaceSnapshotUsesCustomLeftRailState() {
@@ -706,6 +802,10 @@ final class WorkspacePanelFoundationTests: XCTestCase {
                 createdAt: Date(timeIntervalSince1970: 0)
             )
         ])
+        XCTAssertEqual(decoded.layoutSessions.count, 1)
+        XCTAssertEqual(decoded.layoutSessions.first?.workspaceID, workspaceID)
+        XCTAssertEqual(decoded.layoutSessions.first?.panelTree, legacySnapshot.panelTree)
+        XCTAssertEqual(decoded.activeLayoutSessionID, decoded.layoutSessions.first?.id)
     }
 
     func testPanelSurfaceDescriptorDecodesLegacyFeatureCasesAsSessionReferences() throws {
@@ -1699,6 +1799,103 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorCreateTerminalKeepsSingleLayoutSession() async throws {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/LayoutTerminalWorkspace")
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: WorkspacePanelMockPTYClient(processID: 4321))
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceLayoutSessionStore = WorkspaceLayoutSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceLayoutSessionStore: workspaceLayoutSessionStore
+        )
+
+        try await coordinator.createTerminal(in: workspace.id)
+
+        let layoutSessions = workspaceLayoutSessionStore.sessions(in: workspace.id)
+        XCTAssertEqual(layoutSessions.count, 1)
+        XCTAssertEqual(layoutSessions.first?.panelTree.surface, panelStore.rootNode.surface)
+        XCTAssertEqual(workspaceSessionStore.sessions(in: workspace.id).count, 1)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorCreateLayoutSessionDoesNotCreateContentSession() {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/CreateLayoutSessionWorkspace")
+        )
+        let existingPanelID = PanelNode.ID()
+        let panelStore = PanelStore(rootNode: .leaf(id: existingPanelID, surface: .empty))
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceLayoutSessionStore = WorkspaceLayoutSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceLayoutSessionStore: workspaceLayoutSessionStore
+        )
+        _ = workspaceLayoutSessionStore.ensureActiveSession(
+            in: workspace.id,
+            panelTree: panelStore.rootNode,
+            focusedPanelID: panelStore.focusedPanelID
+        )
+
+        coordinator.createLayoutSession()
+
+        XCTAssertEqual(workspaceLayoutSessionStore.sessions(in: workspace.id).map(\.title), ["Session 1", "Session 2"])
+        XCTAssertEqual(workspaceSessionStore.sessions(in: workspace.id), [])
+        XCTAssertEqual(panelStore.rootNode.surface, .empty)
+        XCTAssertNotEqual(panelStore.rootNode.id, existingPanelID)
+    }
+
+    @MainActor
+    func testWorkspaceCoordinatorSelectLayoutSessionRestoresPanelTreeWithoutCreatingContentSession() {
+        let workspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/SelectLayoutSessionWorkspace")
+        )
+        let firstPanelID = PanelNode.ID()
+        let secondPanelID = PanelNode.ID()
+        let firstTree = PanelNode.leaf(id: firstPanelID, surface: .empty)
+        let secondTree = PanelNode.leaf(id: secondPanelID, surface: .empty)
+        let panelStore = PanelStore(rootNode: secondTree, focusedPanelID: secondPanelID)
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceLayoutSessionStore = WorkspaceLayoutSessionStore()
+        let firstSession = workspaceLayoutSessionStore.createSession(
+            in: workspace.id,
+            panelTree: firstTree,
+            focusedPanelID: firstPanelID
+        )
+        let secondSession = workspaceLayoutSessionStore.createSession(
+            in: workspace.id,
+            panelTree: secondTree,
+            focusedPanelID: secondPanelID
+        )
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: WorkspaceStore(activeWorkspace: workspace),
+            panelStore: panelStore,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceLayoutSessionStore: workspaceLayoutSessionStore
+        )
+
+        coordinator.selectLayoutSession(id: firstSession.id)
+
+        XCTAssertEqual(workspaceLayoutSessionStore.sessions(in: workspace.id).map(\.id), [firstSession.id, secondSession.id])
+        XCTAssertEqual(workspaceLayoutSessionStore.activeSessionID(in: workspace.id), firstSession.id)
+        XCTAssertEqual(panelStore.rootNode, firstTree)
+        XCTAssertEqual(panelStore.focusedPanelID, firstPanelID)
+        XCTAssertEqual(workspaceSessionStore.sessions(in: workspace.id), [])
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorReplacingTerminalPanelPreservesDetachedSession() async throws {
         let workspace = Workspace.make(
             id: UUID(),
@@ -2386,6 +2583,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
             terminalCommanding: handler,
             workspaceSessionCreating: handler,
             workspaceSessionCommanding: handler,
+            workspaceLayoutSessionCommanding: handler,
             panelCommanding: handler
         )
         let rootURL = URL(fileURLWithPath: "/tmp/RoutedWorkspace")
@@ -2394,6 +2592,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         let closedWorkspaceID = Workspace.ID()
         let panelID = PanelNode.ID()
         let sessionID = WorkspaceSession.ID()
+        let layoutSessionID = WorkspaceLayoutSession.ID()
         let createRequest = WorkspaceSessionCreateRequest(workspaceID: workspaceID, kind: .terminal)
         let attachmentRequest = WorkspaceSessionAttachmentRequest.automatic(replacingPanelID: panelID)
         let splitSurface = PanelSurfaceDescriptor.empty
@@ -2417,6 +2616,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         router.focusSession(id: sessionID)
         router.showSession(id: sessionID, replacingPanel: panelID)
         router.closeSession(id: sessionID)
+        router.createLayoutSession()
+        router.selectLayoutSession(id: layoutSessionID)
+        router.closeLayoutSession(id: layoutSessionID)
         router.focus(panelID: panelID)
         router.createPanel(splitDirection: .horizontal, surface: splitSurface)
         router.splitPanel(panelID: panelID, direction: .vertical, surface: splitSurface)
@@ -2440,6 +2642,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         XCTAssertEqual(handler.shownSessionID, sessionID)
         XCTAssertEqual(handler.shownSessionPanelID, panelID)
         XCTAssertEqual(handler.closedSessionID, sessionID)
+        XCTAssertEqual(handler.createLayoutSessionCount, 1)
+        XCTAssertEqual(handler.selectedLayoutSessionID, layoutSessionID)
+        XCTAssertEqual(handler.closedLayoutSessionID, layoutSessionID)
         XCTAssertEqual(handler.focusedPanelID, panelID)
         XCTAssertEqual(handler.createdPanelDirection, .horizontal)
         XCTAssertEqual(handler.createdPanelSurface, splitSurface)
@@ -2691,7 +2896,7 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
-    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, PanelCommanding {
+    private final class RecordingCommandHandler: WorkspaceOpening, DocumentOpening, TerminalCommanding, WorkspaceSessionCreating, WorkspaceSessionCommanding, WorkspaceLayoutSessionCommanding, PanelCommanding {
         var openedRootURL: URL?
         var closedWorkspaceID: Workspace.ID?
         var openedDocumentURL: URL?
@@ -2706,6 +2911,9 @@ final class WorkspacePanelFoundationTests: XCTestCase {
         var shownSessionID: WorkspaceSession.ID?
         var shownSessionPanelID: PanelNode.ID?
         var closedSessionID: WorkspaceSession.ID?
+        var createLayoutSessionCount = 0
+        var selectedLayoutSessionID: WorkspaceLayoutSession.ID?
+        var closedLayoutSessionID: WorkspaceLayoutSession.ID?
         var focusedPanelID: PanelNode.ID?
         var createdPanelDirection: SplitDirection?
         var createdPanelSurface: PanelSurfaceDescriptor?
@@ -2789,6 +2997,18 @@ final class WorkspacePanelFoundationTests: XCTestCase {
 
         func closeSession(id sessionID: WorkspaceSession.ID) {
             closedSessionID = sessionID
+        }
+
+        func createLayoutSession() {
+            createLayoutSessionCount += 1
+        }
+
+        func selectLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+            selectedLayoutSessionID = sessionID
+        }
+
+        func closeLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+            closedLayoutSessionID = sessionID
         }
 
         func focus(panelID: PanelNode.ID?) {

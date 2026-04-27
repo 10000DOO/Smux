@@ -13,8 +13,8 @@ struct LeftRailView: View {
     var onExpandFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onSelectFileTreeNode: (FileTreeNode.ID) -> Void = { _ in }
     var onCreateSession: () -> Void = {}
-    var onSelectSession: (WorkspaceSession.ID) -> Void = { _ in }
-    var onCloseSession: (WorkspaceSession.ID) -> Void = { _ in }
+    var onSelectSession: (WorkspaceLayoutSession.ID) -> Void = { _ in }
+    var onCloseSession: (WorkspaceLayoutSession.ID) -> Void = { _ in }
     var onOpenWorkspace: () -> Void = {}
     var onToggleCollapsed: () -> Void = {}
     var onSelectWorkspace: (Workspace.ID) -> Void = { _ in }

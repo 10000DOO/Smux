@@ -251,24 +251,25 @@ final class WorkspaceShellTests: XCTestCase {
     func testLeftRailSessionPresentationUsesSessionNotifications() {
         let panelID = PanelNode.ID()
         let workspaceID = Workspace.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
         let workspace = Workspace.make(
             id: workspaceID,
             rootURL: URL(fileURLWithPath: "/tmp/SessionWorkspace"),
             gitBranch: "feature/sessions"
         )
-        let session = WorkspaceSession(
-            id: WorkspaceSession.ID(),
+        let session = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
             workspaceID: workspaceID,
-            kind: .terminal,
-            content: .terminal(TerminalSession.ID()),
-            title: "Terminal",
+            title: "Session 1",
+            panelTree: .leaf(id: panelID, surface: .session(sessionID: workspaceSessionID)),
+            focusedPanelID: panelID,
             createdAt: Date(timeIntervalSince1970: 0)
         )
         let notifications = [
             workspaceNotification(
                 workspaceID: workspaceID,
                 panelID: panelID,
-                workspaceSessionID: session.id,
+                workspaceSessionID: workspaceSessionID,
                 shouldBadgePanel: true,
                 message: "Older",
                 createdAt: Date(timeIntervalSince1970: 1)
@@ -276,10 +277,19 @@ final class WorkspaceShellTests: XCTestCase {
             workspaceNotification(
                 workspaceID: workspaceID,
                 panelID: panelID,
-                workspaceSessionID: session.id,
+                workspaceSessionID: workspaceSessionID,
+                shouldBadgePanel: false,
+                message: "Visible without badge",
+                createdAt: Date(timeIntervalSince1970: 3)
+            ),
+            workspaceNotification(
+                workspaceID: workspaceID,
+                panelID: panelID,
+                workspaceSessionID: workspaceSessionID,
                 shouldBadgePanel: true,
                 message: "Needs input",
-                createdAt: Date(timeIntervalSince1970: 3)
+                createdAt: Date(timeIntervalSince1970: 4),
+                shouldShowInLeftRail: false
             ),
             workspaceNotification(
                 workspaceID: workspaceID,
@@ -287,47 +297,45 @@ final class WorkspaceShellTests: XCTestCase {
                 workspaceSessionID: WorkspaceSession.ID(),
                 shouldBadgePanel: true,
                 message: "Reused panel stale badge",
-                createdAt: Date(timeIntervalSince1970: 4)
+                createdAt: Date(timeIntervalSince1970: 5)
             )
         ]
 
         let presentation = LeftRailSessionPresentation(
             session: session,
-            visiblePanelID: panelID,
-            focusedPanelID: panelID,
+            activeSessionID: session.id,
             workspace: workspace,
             notifications: notifications
         )
 
         XCTAssertEqual(presentation.id, session.id)
-        XCTAssertEqual(presentation.title, "Terminal")
-        XCTAssertEqual(presentation.systemImage, "terminal")
+        XCTAssertEqual(presentation.title, "Session 1")
+        XCTAssertEqual(presentation.systemImage, "rectangle.split.2x1")
         XCTAssertEqual(presentation.metadataText, "feature/sessions - SessionWorkspace")
-        XCTAssertEqual(presentation.latestNotificationMessage, "Needs input")
+        XCTAssertEqual(presentation.latestNotificationMessage, "Visible without badge")
         XCTAssertEqual(presentation.badgeCount, 2)
         XCTAssertTrue(presentation.isFocused)
     }
 
     func testLeftRailSessionPresentationPreservesHiddenSessionNotifications() {
         let workspaceID = Workspace.ID()
-        let session = WorkspaceSession(
-            id: WorkspaceSession.ID(),
+        let workspaceSessionID = WorkspaceSession.ID()
+        let session = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
             workspaceID: workspaceID,
-            kind: .terminal,
-            content: .terminal(TerminalSession.ID()),
-            title: "Terminal",
+            title: "Session 1",
+            panelTree: .leaf(surface: .session(sessionID: workspaceSessionID)),
             createdAt: Date(timeIntervalSince1970: 0)
         )
         let presentation = LeftRailSessionPresentation(
             session: session,
-            visiblePanelID: nil,
-            focusedPanelID: PanelNode.ID(),
+            activeSessionID: WorkspaceLayoutSession.ID(),
             workspace: Workspace.make(id: workspaceID, rootURL: URL(fileURLWithPath: "/tmp/HiddenSessionWorkspace")),
             notifications: [
                 workspaceNotification(
                     workspaceID: workspaceID,
                     panelID: PanelNode.ID(),
-                    workspaceSessionID: session.id,
+                    workspaceSessionID: workspaceSessionID,
                     shouldBadgePanel: true,
                     message: "Hidden session still needs input"
                 )
@@ -342,19 +350,16 @@ final class WorkspaceShellTests: XCTestCase {
 
     func testLeftRailSessionPresentationDoesNotFocusHiddenSessionWhenFocusIsNil() {
         let workspaceID = Workspace.ID()
-        let session = WorkspaceSession(
-            id: WorkspaceSession.ID(),
+        let session = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
             workspaceID: workspaceID,
-            kind: .terminal,
-            content: .terminal(TerminalSession.ID()),
-            title: "Terminal",
+            title: "Session 1",
             createdAt: Date(timeIntervalSince1970: 0)
         )
 
         let presentation = LeftRailSessionPresentation(
             session: session,
-            visiblePanelID: nil,
-            focusedPanelID: nil,
+            activeSessionID: nil,
             workspace: Workspace.make(id: workspaceID, rootURL: URL(fileURLWithPath: "/tmp/HiddenSessionWorkspace")),
             notifications: []
         )
@@ -437,21 +442,50 @@ final class WorkspaceShellTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceShellSessionStartPolicyCreatesEmptyPanelCommand() {
-        let recorder = WorkspaceShellPanelCommandRecorder()
+    func testWorkspaceShellCreateSessionCommandCreatesLayoutSession() {
+        let recorder = WorkspaceShellLayoutSessionCommandRecorder()
         let router = AppCommandRouter(
             workspaceOpening: nil,
             documentOpening: nil,
             terminalCommanding: nil,
             workspaceSessionCreating: nil,
             workspaceSessionCommanding: nil,
+            workspaceLayoutSessionCommanding: recorder,
             panelCommanding: recorder
         )
 
-        WorkspaceShellSessionStartPolicy.command().perform(using: router)
+        router.createLayoutSession()
 
-        XCTAssertEqual(recorder.createdPanelDirection, .horizontal)
-        XCTAssertEqual(recorder.createdPanelSurface, .empty)
+        XCTAssertEqual(recorder.createLayoutSessionCount, 1)
+    }
+
+    @MainActor
+    func testWorkspaceShellNotificationActivationResolverSelectsLayoutSessionAndFocusedPanel() {
+        let workspaceID = Workspace.ID()
+        let workspaceSessionID = WorkspaceSession.ID()
+        let panelID = PanelNode.ID()
+        let layoutSession = WorkspaceLayoutSession(
+            id: WorkspaceLayoutSession.ID(),
+            workspaceID: workspaceID,
+            title: "Session 1",
+            panelTree: .leaf(id: panelID, surface: .session(sessionID: workspaceSessionID)),
+            focusedPanelID: panelID,
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        let notification = workspaceNotification(
+            workspaceID: workspaceID,
+            panelID: panelID,
+            workspaceSessionID: workspaceSessionID,
+            shouldBadgePanel: true
+        )
+
+        let target = WorkspaceShellNotificationActivationResolver.target(
+            for: notification,
+            layoutSessions: [layoutSession],
+            workspaceSessionIDs: [workspaceSessionID]
+        )
+
+        XCTAssertEqual(target, .layoutSession(layoutSession.id, panelID: panelID))
     }
 
     @MainActor
@@ -622,11 +656,26 @@ final class WorkspaceShellTests: XCTestCase {
 }
 
 @MainActor
-private final class WorkspaceShellPanelCommandRecorder: PanelCommanding {
+private final class WorkspaceShellLayoutSessionCommandRecorder: WorkspaceLayoutSessionCommanding, PanelCommanding {
+    var createLayoutSessionCount = 0
+    var selectedLayoutSessionID: WorkspaceLayoutSession.ID?
     var createdPanelDirection: SplitDirection?
     var createdPanelSurface: PanelSurfaceDescriptor?
+    var focusedPanelID: PanelNode.ID?
 
-    func focus(panelID: PanelNode.ID?) {}
+    func createLayoutSession() {
+        createLayoutSessionCount += 1
+    }
+
+    func selectLayoutSession(id sessionID: WorkspaceLayoutSession.ID) {
+        selectedLayoutSessionID = sessionID
+    }
+
+    func closeLayoutSession(id: WorkspaceLayoutSession.ID) {}
+
+    func focus(panelID: PanelNode.ID?) {
+        focusedPanelID = panelID
+    }
 
     func createPanel(splitDirection: SplitDirection, surface: PanelSurfaceDescriptor) {
         createdPanelDirection = splitDirection

@@ -16,6 +16,7 @@ struct WorkspaceShellView: View {
     @ObservedObject var terminalOutputStore: TerminalOutputStore
     @ObservedObject var terminalPreferencesStore: TerminalPreferencesStore
     @ObservedObject var workspaceSessionStore: WorkspaceSessionStore
+    @ObservedObject var workspaceLayoutSessionStore: WorkspaceLayoutSessionStore
     var commandRouter: AppCommandRouter
     var onOpenWorkspace: () -> Void = {}
     @State private var isLeftRailCollapsed = false
@@ -332,11 +333,10 @@ private extension WorkspaceShellView {
             return []
         }
 
-        return workspaceSessionStore.sessions(in: activeWorkspaceID).map { session in
+        return workspaceLayoutSessionStore.sessions(in: activeWorkspaceID).map { session in
             LeftRailSessionPresentation(
                 session: session,
-                visiblePanelID: panelStore.rootNode.panelID(containingWorkspaceSession: session.id),
-                focusedPanelID: panelStore.focusedPanelID,
+                activeSessionID: workspaceLayoutSessionStore.activeSessionID(in: activeWorkspaceID),
                 workspace: workspaceStore.activeWorkspace,
                 notifications: activeWorkspaceNotifications
             )
@@ -384,16 +384,16 @@ private extension WorkspaceShellView {
         }
     }
 
-    func selectSession(id sessionID: WorkspaceSession.ID) {
-        commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
+    func selectSession(id sessionID: WorkspaceLayoutSession.ID) {
+        commandRouter.selectLayoutSession(id: sessionID)
     }
 
     func createSession() {
-        WorkspaceShellSessionStartPolicy.command().perform(using: commandRouter)
+        commandRouter.createLayoutSession()
     }
 
-    func closeSession(id sessionID: WorkspaceSession.ID) {
-        commandRouter.closeSession(id: sessionID)
+    func closeSession(id sessionID: WorkspaceLayoutSession.ID) {
+        commandRouter.closeLayoutSession(id: sessionID)
     }
 
     func closeWorkspace(id: Workspace.ID) {
@@ -421,12 +421,29 @@ private extension WorkspaceShellView {
             return
         }
 
-        if let sessionID = notification.routing.workspaceSessionID,
-           workspaceSessionStore.session(for: sessionID) != nil {
-            commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
-        } else if let panelID = notification.routing.panelID {
+        let activeWorkspaceID = workspaceStore.activeWorkspace?.id
+        let target = WorkspaceShellNotificationActivationResolver.target(
+            for: notification,
+            layoutSessions: activeWorkspaceID.map { workspaceLayoutSessionStore.sessions(in: $0) } ?? [],
+            workspaceSessionIDs: activeWorkspaceID.map {
+                Set(workspaceSessionStore.sessions(in: $0).map(\.id))
+            } ?? []
+        )
+
+        switch target {
+        case .layoutSession(let layoutSessionID, let panelID):
+            commandRouter.selectLayoutSession(id: layoutSessionID)
+            if let panelID {
+                commandRouter.focus(panelID: panelID)
+            }
+        case .panel(let panelID):
             commandRouter.focus(panelID: panelID)
+        case .workspaceSession(let sessionID):
+            commandRouter.showSession(id: sessionID, replacingPanel: panelStore.focusedPanelID)
+        case .none:
+            break
         }
+
         notificationStore.acknowledge(id: notificationID)
     }
 
@@ -507,31 +524,12 @@ private extension WorkspaceShellView {
             }
         }
     }
+
 }
 
 nonisolated enum WorkspaceSelectedFileOpenCommand: Equatable {
     case replaceFocused(DocumentOpenMode)
     case openInNewPanel(DocumentOpenMode, SplitDirection)
-}
-
-nonisolated enum WorkspaceShellSessionStartCommand: Equatable {
-    case createPanel(SplitDirection, PanelSurfaceDescriptor)
-}
-
-@MainActor
-extension WorkspaceShellSessionStartCommand {
-    func perform(using commandRouter: AppCommandRouter) {
-        switch self {
-        case .createPanel(let splitDirection, let surface):
-            commandRouter.createPanel(splitDirection: splitDirection, surface: surface)
-        }
-    }
-}
-
-nonisolated enum WorkspaceShellSessionStartPolicy {
-    static func command() -> WorkspaceShellSessionStartCommand {
-        .createPanel(.horizontal, .empty)
-    }
 }
 
 nonisolated enum WorkspaceFileOpenPolicy {
@@ -560,6 +558,66 @@ nonisolated enum WorkspaceShellNotificationFilter {
         from notifications: [WorkspaceNotification]
     ) -> [WorkspaceNotification] {
         notifications.filter(\.routing.shouldShowInLeftRail)
+    }
+}
+
+nonisolated enum WorkspaceNotificationActivationTarget: Equatable {
+    case layoutSession(WorkspaceLayoutSession.ID, panelID: PanelNode.ID?)
+    case panel(PanelNode.ID)
+    case workspaceSession(WorkspaceSession.ID)
+    case none
+}
+
+nonisolated enum WorkspaceShellNotificationActivationResolver {
+    static func target(
+        for notification: WorkspaceNotification,
+        layoutSessions: [WorkspaceLayoutSession],
+        workspaceSessionIDs: Set<WorkspaceSession.ID>
+    ) -> WorkspaceNotificationActivationTarget {
+        if let sessionID = notification.routing.workspaceSessionID,
+           let sessionMatch = layoutSession(containingWorkspaceSession: sessionID, in: layoutSessions) {
+            return .layoutSession(sessionMatch.layoutSessionID, panelID: sessionMatch.panelID)
+        }
+
+        if let panelID = notification.routing.panelID,
+           let layoutSessionID = layoutSessionID(containingPanel: panelID, in: layoutSessions) {
+            return .layoutSession(layoutSessionID, panelID: panelID)
+        }
+
+        if let panelID = notification.routing.panelID {
+            return .panel(panelID)
+        }
+
+        if let sessionID = notification.routing.workspaceSessionID,
+           workspaceSessionIDs.contains(sessionID) {
+            return .workspaceSession(sessionID)
+        }
+
+        return .none
+    }
+
+    private static func layoutSession(
+        containingWorkspaceSession sessionID: WorkspaceSession.ID,
+        in layoutSessions: [WorkspaceLayoutSession]
+    ) -> (layoutSessionID: WorkspaceLayoutSession.ID, panelID: PanelNode.ID?)? {
+        for layoutSession in layoutSessions {
+            guard let panelID = layoutSession.panelTree.panelID(containingWorkspaceSession: sessionID) else {
+                continue
+            }
+
+            return (layoutSession.id, panelID)
+        }
+
+        return nil
+    }
+
+    private static func layoutSessionID(
+        containingPanel panelID: PanelNode.ID,
+        in layoutSessions: [WorkspaceLayoutSession]
+    ) -> WorkspaceLayoutSession.ID? {
+        layoutSessions.first {
+            $0.panelTree.containsLeaf(panelID: panelID)
+        }?.id
     }
 }
 

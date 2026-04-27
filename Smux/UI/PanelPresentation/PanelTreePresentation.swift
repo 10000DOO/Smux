@@ -112,7 +112,7 @@ nonisolated struct LeftRailPanelTabPresentation: Identifiable, Equatable {
 }
 
 nonisolated struct LeftRailSessionPresentation: Identifiable, Equatable {
-    var id: WorkspaceSession.ID
+    var id: WorkspaceLayoutSession.ID
     var title: String
     var metadataText: String
     var latestNotificationMessage: String?
@@ -121,25 +121,24 @@ nonisolated struct LeftRailSessionPresentation: Identifiable, Equatable {
     var badgeCount: Int
 
     init(
-        session: WorkspaceSession,
-        visiblePanelID: PanelNode.ID?,
-        focusedPanelID: PanelNode.ID?,
+        session: WorkspaceLayoutSession,
+        activeSessionID: WorkspaceLayoutSession.ID?,
         workspace: Workspace?,
         notifications: [WorkspaceNotification]
     ) {
-        let surfacePresentation = PanelSurfacePresentation(session: session)
-
         id = session.id
-        title = surfacePresentation.title
+        title = session.title
         metadataText = Self.metadataText(for: workspace)
         latestNotificationMessage = Self.latestNotificationMessage(
-            forWorkspaceSession: session.id,
+            forWorkspaceSessionIDs: Set(session.panelTree.workspaceSessionIDs),
+            panelIDs: Set(session.panelTree.leafIDs),
             notifications: notifications
         )
-        systemImage = surfacePresentation.systemImage
-        isFocused = visiblePanelID.map { $0 == focusedPanelID } ?? false
-        badgeCount = PanelNotificationBadgeSummary.unacknowledgedBadgeCount(
-            forWorkspaceSession: session.id,
+        systemImage = "rectangle.split.2x1"
+        isFocused = session.id == activeSessionID
+        badgeCount = Self.unacknowledgedBadgeCount(
+            forWorkspaceSessionIDs: Set(session.panelTree.workspaceSessionIDs),
+            panelIDs: Set(session.panelTree.leafIDs),
             notifications: notifications
         )
     }
@@ -157,13 +156,38 @@ nonisolated struct LeftRailSessionPresentation: Identifiable, Equatable {
         return rootName
     }
 
+    private static func unacknowledgedBadgeCount(
+        forWorkspaceSessionIDs sessionIDs: Set<WorkspaceSession.ID>,
+        panelIDs: Set<PanelNode.ID>,
+        notifications: [WorkspaceNotification]
+    ) -> Int {
+        notifications.filter {
+            $0.routing.shouldBadgePanel
+                && $0.acknowledgedAt == nil
+                && (
+                    $0.routing.workspaceSessionID.map { sessionIDs.contains($0) } == true
+                        || (
+                            $0.routing.workspaceSessionID == nil
+                                && $0.routing.panelID.map { panelIDs.contains($0) } == true
+                        )
+                )
+        }.count
+    }
+
     private static func latestNotificationMessage(
-        forWorkspaceSession sessionID: WorkspaceSession.ID,
+        forWorkspaceSessionIDs sessionIDs: Set<WorkspaceSession.ID>,
+        panelIDs: Set<PanelNode.ID>,
         notifications: [WorkspaceNotification]
     ) -> String? {
         notifications
             .filter {
-                $0.routing.workspaceSessionID == sessionID
+                (
+                    $0.routing.workspaceSessionID.map { sessionIDs.contains($0) } == true
+                        || (
+                            $0.routing.workspaceSessionID == nil
+                                && $0.routing.panelID.map { panelIDs.contains($0) } == true
+                        )
+                )
                     && $0.routing.shouldShowInLeftRail
                     && $0.acknowledgedAt == nil
             }

@@ -18,7 +18,7 @@ nonisolated enum PanelViewportDescriptor: Codable, Hashable {
 typealias PanelSurfaceDescriptor = PanelViewportDescriptor
 
 extension PanelViewportDescriptor {
-    var sessionID: WorkspaceSession.ID? {
+    nonisolated var sessionID: WorkspaceSession.ID? {
         switch self {
         case .session(let sessionID):
             return sessionID
@@ -161,13 +161,13 @@ nonisolated struct PanelNode: Identifiable, Codable, Hashable {
 }
 
 extension PanelNode {
-    static let placeholder = leaf(surface: .empty)
+    nonisolated static let placeholder = leaf(surface: .empty)
 
-    static func leaf(id: ID = UUID(), surface: PanelSurfaceDescriptor = .empty) -> PanelNode {
+    nonisolated static func leaf(id: ID = UUID(), surface: PanelSurfaceDescriptor = .empty) -> PanelNode {
         PanelNode(id: id, kind: .leaf, surface: surface)
     }
 
-    static func split(
+    nonisolated static func split(
         id: ID = UUID(),
         direction: SplitDirection,
         ratio: Double = 0.5,
@@ -183,23 +183,23 @@ extension PanelNode {
         )
     }
 
-    var isLeaf: Bool {
+    nonisolated var isLeaf: Bool {
         kind == .leaf
     }
 
-    var isSplit: Bool {
+    nonisolated var isSplit: Bool {
         kind == .split
     }
 
-    var normalizedRatio: Double {
+    nonisolated var normalizedRatio: Double {
         Self.clampedRatio(ratio ?? 0.5)
     }
 
-    static func clampedRatio(_ ratio: Double) -> Double {
+    nonisolated static func clampedRatio(_ ratio: Double) -> Double {
         min(max(ratio, 0.1), 0.9)
     }
 
-    var firstLeafID: ID? {
+    nonisolated var firstLeafID: ID? {
         if isLeaf {
             return id
         }
@@ -207,7 +207,7 @@ extension PanelNode {
         return children.lazy.compactMap(\.firstLeafID).first
     }
 
-    var lastLeafID: ID? {
+    nonisolated var lastLeafID: ID? {
         if isLeaf {
             return id
         }
@@ -215,12 +215,20 @@ extension PanelNode {
         return children.reversed().lazy.compactMap(\.lastLeafID).first
     }
 
-    var leafIDs: [ID] {
+    nonisolated var leafIDs: [ID] {
         if isLeaf {
             return [id]
         }
 
         return children.flatMap(\.leafIDs)
+    }
+
+    nonisolated var workspaceSessionIDs: [WorkspaceSession.ID] {
+        if isLeaf {
+            return surface?.sessionID.map { [$0] } ?? []
+        }
+
+        return children.flatMap(\.workspaceSessionIDs)
     }
 
     func contains(panelID: ID) -> Bool {
@@ -231,7 +239,7 @@ extension PanelNode {
         return children.contains { $0.contains(panelID: panelID) }
     }
 
-    func containsLeaf(panelID: ID) -> Bool {
+    nonisolated func containsLeaf(panelID: ID) -> Bool {
         if id == panelID {
             return isLeaf
         }
@@ -251,7 +259,7 @@ extension PanelNode {
         return children.lazy.compactMap { $0.surface(forLeaf: panelID) }.first
     }
 
-    func panelID(containingWorkspaceSession sessionID: WorkspaceSession.ID) -> ID? {
+    nonisolated func panelID(containingWorkspaceSession sessionID: WorkspaceSession.ID) -> ID? {
         if surface?.sessionID == sessionID, isLeaf {
             return id
         }
