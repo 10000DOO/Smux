@@ -26,7 +26,6 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
-        webView.setValue(false, forKey: "drawsBackground")
         return webView
     }
 
@@ -102,7 +101,11 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
             url: URL?,
             externalLinkPolicy: PreviewExternalLinkPolicy
         ) -> PreviewNavigationDecision {
-            if isPreviewDocumentURL(url) || isInternalAnchorURL(url) {
+            if isInternalAnchorURL(url) {
+                return .allowInWebView
+            }
+
+            if navigationType == .other, isPreviewDocumentURL(url) {
                 return .allowInWebView
             }
 
@@ -127,10 +130,24 @@ struct PreviewWebViewRepresentable: NSViewRepresentable {
                 return true
             }
 
-            return url.scheme == "about"
-                && url.host == nil
-                && url.path == "blank"
-                && url.fragment == nil
+            switch url.scheme?.lowercased() {
+            case "about":
+                return url.host == nil
+                    && (url.path == "blank" || url.absoluteString == "about:blank")
+                    && url.fragment == nil
+            case "applewebdata":
+                guard let host = url.host else {
+                    return false
+                }
+
+                return UUID(uuidString: host) != nil
+                    && url.user == nil
+                    && url.password == nil
+                    && url.port == nil
+                    && url.fragment == nil
+            default:
+                return false
+            }
         }
 
         private static func isInternalAnchorURL(_ url: URL?) -> Bool {

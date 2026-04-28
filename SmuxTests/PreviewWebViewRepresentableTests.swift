@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import WebKit
 @testable import Smux
 
@@ -157,6 +158,62 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertTrue(underZoomed.contains("--preview-zoom: 0.5;"))
     }
 
+    @MainActor
+    func testWebViewLoadsRenderedMarkdownText() async throws {
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1 id=\"title\">Title</h1><p>Rendered Markdown</p>")
+        )
+        let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let navigationDelegate = PreviewWebViewNavigationDelegate()
+        webView.navigationDelegate = navigationDelegate
+        let loadFinished = expectation(description: "Preview WebView load finished")
+        navigationDelegate.didFinish = { loadFinished.fulfill() }
+        navigationDelegate.didFail = { error in
+            XCTFail("Preview WebView load failed: \(error)")
+            loadFinished.fulfill()
+        }
+
+        webView.loadHTMLString(html, baseURL: nil)
+        await fulfillment(of: [loadFinished], timeout: 5)
+
+        let innerTextValue = try await webView.evaluateJavaScript("document.body.innerText")
+        let innerText = try XCTUnwrap(innerTextValue as? String)
+        XCTAssertTrue(innerText.contains("Title"))
+        XCTAssertTrue(innerText.contains("Rendered Markdown"))
+    }
+
+    @MainActor
+    func testCoordinatorAllowsPreviewHTMLDocumentLoad() async throws {
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1 id=\"title\">Title</h1><p>Rendered Markdown</p>")
+        )
+        let html = PreviewWebViewHTMLBuilder.makeHTML(state: state)
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 320, height: 480))
+        let coordinator = PreviewWebViewRepresentable.Coordinator()
+        webView.navigationDelegate = coordinator
+
+        webView.loadHTMLString(html, baseURL: nil)
+        let innerText = try await waitForBodyInnerText(in: webView)
+
+        XCTAssertTrue(innerText.contains("Title"))
+        XCTAssertTrue(innerText.contains("Rendered Markdown"))
+    }
+
+    @MainActor
+    func testRepresentableKeepsWebViewBackgroundOpaque() async throws {
+        let state = makeState(
+            sanitizedMarkdown: SanitizedMarkdown(html: "<h1 id=\"title\">Title</h1><p>Rendered Markdown</p>")
+        )
+        let hostView = NSHostingView(rootView: PreviewWebViewRepresentable(state: state))
+        hostView.frame = NSRect(x: 0, y: 0, width: 320, height: 480)
+
+        let webView = try await waitForSubview(WKWebView.self, in: hostView)
+        let drawsBackground = try XCTUnwrap(webView.value(forKey: "drawsBackground") as? Bool)
+
+        XCTAssertTrue(drawsBackground)
+    }
+
     func testAddsMermaidDiagramZoomControlsAndPanSurface() {
         let blockID = UUID(uuidString: "00000000-0000-0000-0000-000000000024")!
         let placeholder = """
@@ -235,17 +292,10 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertFalse(html.contains("unpkg.com"))
 
         let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        let navigationDelegate = PreviewWebViewNavigationDelegate()
-        webView.navigationDelegate = navigationDelegate
-        let loadFinished = expectation(description: "Preview WebView load finished")
-        navigationDelegate.didFinish = { loadFinished.fulfill() }
-        navigationDelegate.didFail = { error in
-            XCTFail("Preview WebView load failed: \(error)")
-            loadFinished.fulfill()
-        }
+        let coordinator = PreviewWebViewRepresentable.Coordinator()
+        webView.navigationDelegate = coordinator
 
         webView.loadHTMLString(html, baseURL: nil)
-        await fulfillment(of: [loadFinished], timeout: 5)
 
         let status = try await waitForMermaidRender(in: webView, expectedDiagramCount: blocks.count)
         XCTAssertEqual(status.svgCount, blocks.count)
@@ -283,6 +333,38 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         XCTAssertEqual(
             PreviewWebViewRepresentable.Coordinator.policy(for: .other, url: URL(string: "about:blank")),
             .allow
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(
+                for: .other,
+                url: URL(string: "applewebdata://00000000-0000-0000-0000-000000000000")
+            ),
+            .allow
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(for: .linkActivated, url: URL(string: "about:blank")),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(
+                for: .linkActivated,
+                url: URL(string: "applewebdata://00000000-0000-0000-0000-000000000000")
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(
+                for: .other,
+                url: URL(string: "applewebdata://example.com/path")
+            ),
+            .cancel
+        )
+        XCTAssertEqual(
+            PreviewWebViewRepresentable.Coordinator.policy(
+                for: .linkActivated,
+                url: URL(string: "applewebdata://example.com/path")
+            ),
+            .cancel
         )
     }
 
@@ -417,6 +499,61 @@ final class PreviewWebViewRepresentableTests: XCTestCase {
         let value = try await webView.evaluateJavaScript(script)
         let json = try XCTUnwrap(value as? String)
         return try JSONDecoder().decode(MermaidWebViewStatus.self, from: Data(json.utf8))
+    }
+
+    @MainActor
+    private func waitForBodyInnerText(in webView: WKWebView) async throws -> String {
+        var latestInnerText = ""
+
+        for _ in 0..<50 {
+            if let innerText = try await webView.evaluateJavaScript("document.body.innerText") as? String {
+                latestInnerText = innerText
+                if !innerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return innerText
+                }
+            }
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        XCTFail("Timed out waiting for Preview WebView body text: \(latestInnerText)")
+        return latestInnerText
+    }
+
+    @MainActor
+    private func waitForSubview<View: NSView>(
+        _ viewType: View.Type,
+        in rootView: NSView
+    ) async throws -> View {
+        for _ in 0..<50 {
+            rootView.layoutSubtreeIfNeeded()
+            if let subview = firstSubview(of: viewType, in: rootView) {
+                return subview
+            }
+
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        XCTFail("Timed out waiting for \(viewType) in \(rootView)")
+        throw XCTSkip("Expected \(viewType) to be present")
+    }
+
+    @MainActor
+    private func firstSubview<View: NSView>(
+        of viewType: View.Type,
+        in rootView: NSView
+    ) -> View? {
+        if let rootView = rootView as? View {
+            return rootView
+        }
+
+        for subview in rootView.subviews {
+            if let match = firstSubview(of: viewType, in: subview) {
+                return match
+            }
+        }
+
+        return nil
     }
 
     private func makeMermaidBlock(
