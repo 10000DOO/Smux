@@ -9,10 +9,15 @@ nonisolated final class MarkdownPreviewPipeline {
         self.renderer = renderer
     }
 
-    func render(documentID: DocumentSession.ID, text: String, version: Int) async throws -> PreviewState {
+    func render(
+        documentID: DocumentSession.ID,
+        text: String,
+        version: Int,
+        language: DocumentLanguage = .markdown
+    ) async throws -> PreviewState {
         recordRequestedVersion(version, for: documentID)
 
-        let renderResult = renderer.render(text)
+        let renderResult = renderResult(for: text, language: language)
         let stale = isStale(version, for: documentID)
         var errors = renderResult.errors
 
@@ -36,6 +41,15 @@ nonisolated final class MarkdownPreviewPipeline {
             zoom: PreviewState.defaultZoom,
             scrollAnchor: nil
         )
+    }
+
+    private func renderResult(for text: String, language: DocumentLanguage) -> MarkdownPreviewRenderResult {
+        switch language {
+        case .mermaid:
+            return MermaidDocumentPreviewRenderer.render(text)
+        case .markdown, .plainText:
+            return renderer.render(text)
+        }
     }
 
     func invalidate(documentID: DocumentSession.ID) {

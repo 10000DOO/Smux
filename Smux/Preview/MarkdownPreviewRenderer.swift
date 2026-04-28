@@ -17,6 +17,42 @@ nonisolated struct BasicMarkdownPreviewRenderer: MarkdownPreviewRendering {
     }
 }
 
+nonisolated enum MermaidDocumentPreviewRenderer {
+    static func render(_ source: String) -> MarkdownPreviewRenderResult {
+        let normalized = source
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return MarkdownPreviewRenderResult(
+                sanitizedMarkdown: SanitizedMarkdown(html: ""),
+                mermaidBlocks: [],
+                errors: []
+            )
+        }
+
+        let sourceRange = SourceRange(
+            startLine: 1,
+            endLine: max(1, normalized.components(separatedBy: "\n").count)
+        )
+        let id = stableUUID(seed: "mermaid-document:\(sourceRange.startLine):\(sourceRange.endLine):\(normalized)")
+        let block = MermaidBlockState(
+            id: id,
+            sourceRange: sourceRange,
+            source: normalized,
+            status: .pending,
+            artifact: nil,
+            errorMessage: nil
+        )
+
+        return MarkdownPreviewRenderResult(
+            sanitizedMarkdown: SanitizedMarkdown(html: mermaidPlaceholderHTML(id: id, sourceRange: sourceRange)),
+            mermaidBlocks: [block],
+            errors: []
+        )
+    }
+}
+
 private nonisolated struct MarkdownHTMLRenderer {
     private let lines: [String]
     private var index = 0
@@ -132,11 +168,7 @@ private nonisolated struct MarkdownHTMLRenderer {
             )
         }
 
-        html.append(
-            """
-            <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(escapeAttribute(id.uuidString))" data-source-start-line="\(sourceRange.startLine)" data-source-end-line="\(sourceRange.endLine)"></div>
-            """
-        )
+        html.append(mermaidPlaceholderHTML(id: id, sourceRange: sourceRange))
     }
 
     private mutating func renderTable() {
@@ -513,6 +545,12 @@ private nonisolated func escapeHTML(_ value: String) -> String {
 
 private nonisolated func escapeAttribute(_ value: String) -> String {
     escapeHTML(value)
+}
+
+private nonisolated func mermaidPlaceholderHTML(id: UUID, sourceRange: SourceRange) -> String {
+    """
+    <div class="mermaid-preview-placeholder" data-mermaid-block-id="\(escapeAttribute(id.uuidString))" data-source-start-line="\(sourceRange.startLine)" data-source-end-line="\(sourceRange.endLine)"></div>
+    """
 }
 
 private nonisolated func stableUUID(seed: String) -> UUID {

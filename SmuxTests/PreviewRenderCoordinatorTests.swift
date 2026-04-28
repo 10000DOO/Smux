@@ -65,6 +65,44 @@ final class PreviewRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(fileIO.loadCount, 1)
     }
 
+    func testRenderUsesDocumentLanguageForStandaloneMermaidPreview() async throws {
+        let documentID = DocumentSession.ID()
+        let previewID = PreviewState.ID()
+        let documentStore = DocumentSessionStore()
+        let previewStore = PreviewSessionStore()
+        let fileIO = StubPreviewDocumentFileIO(
+            text: """
+            flowchart LR
+                A --> B
+            """
+        )
+        let coordinator = PreviewRenderCoordinator(
+            documentSessionStore: documentStore,
+            previewSessionStore: previewStore,
+            sourceResolver: PreviewRenderSourceResolver(fileIO: fileIO)
+        )
+
+        documentStore.upsertSession(
+            DocumentSession.make(
+                id: documentID,
+                workspaceID: Workspace.ID(),
+                url: URL(fileURLWithPath: "/tmp/diagram.mmd"),
+                textVersion: 4
+            )
+        )
+        previewStore.bind(previewID: previewID, sourceDocumentID: documentID)
+
+        await coordinator.render(previewID: previewID)
+
+        let state = try XCTUnwrap(previewStore.state(for: previewID))
+        let block = try XCTUnwrap(state.mermaidBlocks.first)
+        XCTAssertEqual(state.renderVersion, 4)
+        XCTAssertEqual(state.mermaidBlocks.count, 1)
+        XCTAssertEqual(block.source, "flowchart LR\n    A --> B")
+        XCTAssertTrue(state.sanitizedMarkdown?.html.contains("mermaid-preview-placeholder") == true)
+        XCTAssertFalse(state.sanitizedMarkdown?.html.contains("<pre><code") == true)
+    }
+
     func testRenderStoresErrorWhenSourceDocumentIsMissing() async throws {
         let documentID = DocumentSession.ID()
         let previewID = PreviewState.ID()

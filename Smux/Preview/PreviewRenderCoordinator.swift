@@ -50,7 +50,8 @@ final class PreviewRenderCoordinator: PreviewRenderingCoordinating {
             let state = try await pipeline.render(
                 documentID: sourceDocumentID,
                 text: snapshot.text,
-                version: snapshot.version
+                version: snapshot.version,
+                language: sourceSession.language
             )
 
             guard shouldApply(state, previewID: previewID, store: previewSessionStore) else {

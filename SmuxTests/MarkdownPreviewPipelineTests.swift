@@ -163,6 +163,52 @@ final class MarkdownPreviewPipelineTests: XCTestCase {
         XCTAssertFalse(html.contains("A --&gt; B"))
     }
 
+    func testRendersStandaloneMermaidDocumentAsPreviewBlock() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+        let source = """
+        flowchart LR
+            A --> B
+        """
+
+        let state = try await pipeline.render(
+            documentID: DocumentSession.ID(),
+            text: source,
+            version: 1,
+            language: .mermaid
+        )
+        let html = try XCTUnwrap(state.sanitizedMarkdown?.html)
+        let block = try XCTUnwrap(state.mermaidBlocks.first)
+
+        XCTAssertTrue(state.errors.isEmpty)
+        XCTAssertEqual(state.mermaidBlocks.count, 1)
+        XCTAssertEqual(block.sourceRange, SourceRange(startLine: 1, endLine: 2))
+        XCTAssertEqual(block.source, source)
+        XCTAssertEqual(block.status, .pending)
+        XCTAssertNil(block.artifact)
+        XCTAssertNil(block.errorMessage)
+        XCTAssertTrue(html.contains("class=\"mermaid-preview-placeholder\""))
+        XCTAssertTrue(html.contains("data-mermaid-block-id=\"\(block.id.uuidString)\""))
+        XCTAssertTrue(html.contains("data-source-start-line=\"1\""))
+        XCTAssertTrue(html.contains("data-source-end-line=\"2\""))
+        XCTAssertFalse(html.contains("<pre><code"))
+        XCTAssertFalse(html.contains("A --&gt; B"))
+    }
+
+    func testEmptyStandaloneMermaidDocumentRendersBlankPreview() async throws {
+        let pipeline = MarkdownPreviewPipeline()
+
+        let state = try await pipeline.render(
+            documentID: DocumentSession.ID(),
+            text: " \n\t",
+            version: 1,
+            language: .mermaid
+        )
+
+        XCTAssertEqual(state.sanitizedMarkdown?.html, "")
+        XCTAssertTrue(state.mermaidBlocks.isEmpty)
+        XCTAssertTrue(state.errors.isEmpty)
+    }
+
     func testExtractsMmdAndTildeMermaidFencesWithoutDuplicatingSourceCodeHTML() async throws {
         let pipeline = MarkdownPreviewPipeline()
         let markdown = """
