@@ -1,4 +1,6 @@
 import AppKit
+import CoreText
+import SwiftTerm
 import XCTest
 @testable import Smux
 
@@ -375,6 +377,156 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertNil(TerminalPowerlineSymbol(text: "\u{E0B0}\u{E0A0}"))
     }
 
+    func testSwiftTermGridTerminalViewDrawsPowerlineSymbolPixels() throws {
+        let appearance = TerminalAppearance(theme: .dark)
+        let cellSize = TerminalTypography.cellSize(for: appearance.fontSize)
+        let frame = NSRect(
+            x: 0,
+            y: 0,
+            width: cellSize.width * 8,
+            height: cellSize.height
+        )
+        let terminalView = SwiftTermGridTerminalView(frame: frame)
+        let palette = TerminalAppearancePalette.palette(for: appearance.theme)
+
+        terminalView.update(
+            outputSnapshot: TerminalOutputByteSnapshot(data: Data("A\u{E0A0}\u{E0B0}B".utf8), startOffset: 0),
+            appearance: appearance,
+            onInput: { _ in },
+            onResize: { _, _ in }
+        )
+        terminalView.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            String(try XCTUnwrap(terminalView.terminalForTesting.getCharacter(col: 1, row: 0))),
+            "\u{E0A0}"
+        )
+        XCTAssertEqual(
+            String(try XCTUnwrap(terminalView.terminalForTesting.getCharacter(col: 2, row: 0))),
+            "\u{E0B0}"
+        )
+
+        let image = try bitmapImage(width: Int(ceil(frame.width)), height: Int(ceil(frame.height)))
+        try drawView(terminalView, in: frame, into: image)
+
+        let branchRect = CGRect(
+            x: cellSize.width,
+            y: 0,
+            width: cellSize.width,
+            height: cellSize.height
+        )
+        let branchPixels = countPixels(in: image, rect: branchRect) { color in
+            colorDistance(color, palette.background) > 0.25
+        }
+        let branchBounds = try XCTUnwrap(pixelBounds(in: image, rect: branchRect) { color in
+            colorDistance(color, palette.background) > 0.25
+        })
+        let separatorRect = CGRect(
+            x: cellSize.width * 2,
+            y: 0,
+            width: cellSize.width,
+            height: cellSize.height
+        )
+        let separatorPixels = countPixels(in: image, rect: separatorRect) { color in
+            colorDistance(color, palette.background) > 0.25
+        }
+
+        XCTAssertGreaterThan(
+            branchPixels,
+            max(14, Int(branchRect.width * branchRect.height * 0.16))
+        )
+        XCTAssertLessThan(
+            branchPixels,
+            Int(branchRect.width * branchRect.height * 0.55)
+        )
+        XCTAssertGreaterThan(branchBounds.height, branchRect.height * 0.76)
+        XCTAssertGreaterThan(branchBounds.width, branchRect.width * 0.52)
+        XCTAssertGreaterThan(
+            separatorPixels,
+            Int(separatorRect.width * separatorRect.height * 0.25)
+        )
+    }
+
+    func testSwiftTermGridTerminalViewDefersResizeCallback() {
+        let appearance = TerminalAppearance(theme: .dark)
+        let cellSize = TerminalTypography.cellSize(for: appearance.fontSize)
+        let terminalView = SwiftTermGridTerminalView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: cellSize.width * 80,
+            height: cellSize.height * 24
+        ))
+        let resizeDelivered = expectation(description: "resize delivered after current update")
+        var resizeEvents: [TerminalGridSizeEstimator] = []
+
+        terminalView.update(
+            outputSnapshot: .empty,
+            appearance: appearance,
+            onInput: { _ in },
+            onResize: { columns, rows in
+                resizeEvents.append(TerminalGridSizeEstimator(columns: columns, rows: rows))
+                resizeDelivered.fulfill()
+            }
+        )
+
+        terminalView.setFrameSize(NSSize(
+            width: cellSize.width * 96,
+            height: cellSize.height * 28
+        ))
+
+        XCTAssertTrue(resizeEvents.isEmpty)
+        wait(for: [resizeDelivered], timeout: 1)
+        XCTAssertEqual(resizeEvents, [TerminalGridSizeEstimator(columns: 96, rows: 28)])
+    }
+
+    func testSwiftTermGridTerminalContainerClipsTerminalToBounds() {
+        let terminalView = SwiftTermGridTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 960, height: 480)
+        )
+        let container = SwiftTermGridTerminalContainerView(terminalView: terminalView)
+
+        XCTAssertTrue(container.wantsLayer)
+        XCTAssertEqual(container.layer?.masksToBounds, true)
+        XCTAssertEqual(container.intrinsicContentSize.width, NSView.noIntrinsicMetric)
+        XCTAssertEqual(container.intrinsicContentSize.height, NSView.noIntrinsicMetric)
+
+        container.setFrameSize(NSSize(width: 240, height: 120))
+        container.layout()
+
+        XCTAssertEqual(terminalView.frame, container.bounds)
+    }
+
+    func testTerminalTypographyShapesPowerlineGlyphsThroughFallbackFont() throws {
+        let hasPowerlineFallback = [
+            "Symbols Nerd Font Mono",
+            "Symbols Nerd Font",
+            "MesloLGS NF",
+            "MesloLGS Nerd Font Mono",
+            "JetBrainsMono Nerd Font",
+            "Hack Nerd Font"
+        ].contains { NSFont(name: $0, size: TerminalAppearance.defaultFontSize) != nil }
+        guard hasPowerlineFallback else {
+            throw XCTSkip("No Powerline-capable fallback font is available on this runner.")
+        }
+
+        let font = TerminalTypography.font(for: TerminalAppearance.defaultFontSize)
+        let attributedString = NSAttributedString(
+            string: "\u{E0A0}\u{E0B0}\u{E0B1}\u{E0B2}\u{E0B3}",
+            attributes: [.font: font]
+        )
+        let line = CTLineCreateWithAttributedString(attributedString)
+        let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+        let glyphs = runs.flatMap { run -> [CGGlyph] in
+            let glyphCount = CTRunGetGlyphCount(run)
+            var glyphs = Array(repeating: CGGlyph(0), count: glyphCount)
+            CTRunGetGlyphs(run, CFRange(), &glyphs)
+            return glyphs
+        }
+
+        XCTAssertEqual(glyphs.count, attributedString.length)
+        XCTAssertFalse(glyphs.contains(0))
+    }
+
     func testTerminalGridSizeEstimatorClampsAndUsesInsets() {
         let gridSize = TerminalGridSizeEstimator.estimate(
             size: CGSize(width: 96, height: 50),
@@ -493,6 +645,114 @@ final class TerminalViewModelTests: XCTestCase {
         }
 
         return CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
+    }
+
+    private func bitmapImage(width: Int, height: Int) throws -> NSBitmapImageRep {
+        try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: width,
+                pixelsHigh: height,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+        )
+    }
+
+    private func drawView(
+        _ view: NSView,
+        in frame: NSRect,
+        into image: NSBitmapImageRep
+    ) throws {
+        let graphicsContext = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: image))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = graphicsContext
+        NSColor.clear.setFill()
+        frame.fill()
+        view.draw(frame)
+        graphicsContext.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func countPixels(
+        in image: NSBitmapImageRep,
+        rect: CGRect,
+        matching predicate: (NSColor) -> Bool
+    ) -> Int {
+        let minX = max(0, Int(floor(rect.minX)))
+        let maxX = min(image.pixelsWide, Int(ceil(rect.maxX)))
+        let minY = max(0, Int(floor(rect.minY)))
+        let maxY = min(image.pixelsHigh, Int(ceil(rect.maxY)))
+        var count = 0
+
+        for y in minY..<maxY {
+            for x in minX..<maxX {
+                guard let color = image.colorAt(x: x, y: y),
+                      color.alphaComponent > 0.1,
+                      predicate(color) else {
+                    continue
+                }
+                count += 1
+            }
+        }
+
+        return count
+    }
+
+    private func pixelBounds(
+        in image: NSBitmapImageRep,
+        rect: CGRect,
+        matching predicate: (NSColor) -> Bool
+    ) -> CGRect? {
+        let minX = max(0, Int(floor(rect.minX)))
+        let maxX = min(image.pixelsWide, Int(ceil(rect.maxX)))
+        let minY = max(0, Int(floor(rect.minY)))
+        let maxY = min(image.pixelsHigh, Int(ceil(rect.maxY)))
+        var left = maxX
+        var right = minX
+        var top = maxY
+        var bottom = minY
+
+        for y in minY..<maxY {
+            for x in minX..<maxX {
+                guard let color = image.colorAt(x: x, y: y),
+                      color.alphaComponent > 0.1,
+                      predicate(color) else {
+                    continue
+                }
+                left = min(left, x)
+                right = max(right, x)
+                top = min(top, y)
+                bottom = max(bottom, y)
+            }
+        }
+
+        guard left <= right, top <= bottom else {
+            return nil
+        }
+
+        return CGRect(
+            x: CGFloat(left),
+            y: CGFloat(top),
+            width: CGFloat(right - left + 1),
+            height: CGFloat(bottom - top + 1)
+        )
+    }
+
+    private func colorDistance(_ lhs: NSColor, _ rhs: NSColor) -> CGFloat {
+        guard let lhs = lhs.usingColorSpace(.deviceRGB),
+              let rhs = rhs.usingColorSpace(.deviceRGB) else {
+            return 0
+        }
+
+        return abs(lhs.redComponent - rhs.redComponent)
+            + abs(lhs.greenComponent - rhs.greenComponent)
+            + abs(lhs.blueComponent - rhs.blueComponent)
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 struct TerminalTypography {
     static let defaultTextInsets = NSSize(width: 10, height: 8)
@@ -48,9 +49,10 @@ struct TerminalTypography {
 
     static func font(for fontSize: Double) -> NSFont {
         let size = CGFloat(TerminalAppearance.clampedFontSize(fontSize))
-        return NSFont(name: "SF Mono", size: size)
+        let baseFont = NSFont(name: "SF Mono", size: size)
             ?? NSFont(name: "Menlo", size: size)
             ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        return fontWithPowerlineFallback(for: baseFont)
     }
 
     static func cellSize(for fontSize: Double) -> CGSize {
@@ -123,4 +125,48 @@ struct TerminalTypography {
         let height = ceil(font.ascender - font.descender + max(font.leading, 0))
         return CGSize(width: max(1, width), height: max(1, height))
     }
+
+    private static func fontWithPowerlineFallback(for baseFont: NSFont) -> NSFont {
+        let fallbackDescriptors = powerlineFallbackFontNames.compactMap { fontName -> CTFontDescriptor? in
+            guard let font = NSFont(name: fontName, size: baseFont.pointSize),
+                  canShapePowerlineGlyphs(with: font) else {
+                return nil
+            }
+            return CTFontCopyFontDescriptor(font as CTFont)
+        }
+
+        guard !fallbackDescriptors.isEmpty else {
+            return baseFont
+        }
+
+        let descriptor = CTFontDescriptorCreateCopyWithAttributes(
+            CTFontCopyFontDescriptor(baseFont as CTFont),
+            [kCTFontCascadeListAttribute: fallbackDescriptors] as CFDictionary
+        )
+        return CTFontCreateWithFontDescriptor(descriptor, baseFont.pointSize, nil) as NSFont
+    }
+
+    private static func canShapePowerlineGlyphs(with font: NSFont) -> Bool {
+        var characters = powerlineGlyphs
+        var glyphs = Array(repeating: CGGlyph(0), count: characters.count)
+        return CTFontGetGlyphsForCharacters(font as CTFont, &characters, &glyphs, characters.count)
+            && !glyphs.contains(0)
+    }
+
+    private static let powerlineFallbackFontNames = [
+        "Symbols Nerd Font Mono",
+        "Symbols Nerd Font",
+        "MesloLGS NF",
+        "MesloLGS Nerd Font Mono",
+        "JetBrainsMono Nerd Font",
+        "Hack Nerd Font"
+    ]
+
+    private static let powerlineGlyphs: [UniChar] = [
+        0xE0A0,
+        0xE0B0,
+        0xE0B1,
+        0xE0B2,
+        0xE0B3
+    ]
 }

@@ -576,24 +576,27 @@ enum TerminalPowerlineSymbol: Character {
     }
 
     private func drawBranch(in rect: NSRect) {
-        let iconRect = rect.insetBy(dx: rect.width * 0.18, dy: rect.height * 0.18)
-        let radius = max(1, min(iconRect.width, iconRect.height) * 0.12)
-        let stemX = iconRect.minX + iconRect.width * 0.35
-        let topY = iconRect.minY + iconRect.height * 0.25
-        let bottomY = iconRect.minY + iconRect.height * 0.75
-        let branchX = iconRect.minX + iconRect.width * 0.72
-        let branchY = iconRect.minY + iconRect.height * 0.42
+        let iconRect = rect.insetBy(dx: rect.width * 0.04, dy: rect.height * 0.04)
+        let size = min(iconRect.width, iconRect.height)
+        let strokeWidth = max(2, size * 0.18)
+        let radius = max(1.25, strokeWidth * 0.58)
+        let stemX = iconRect.minX + iconRect.width * 0.32
+        let topY = iconRect.minY + iconRect.height * 0.13
+        let bottomY = iconRect.minY + iconRect.height * 0.87
+        let forkY = iconRect.minY + iconRect.height * 0.52
+        let branchX = iconRect.minX + iconRect.width * 0.78
+        let branchY = iconRect.minY + iconRect.height * 0.30
 
         let path = NSBezierPath()
         path.move(to: NSPoint(x: stemX, y: topY + radius))
         path.line(to: NSPoint(x: stemX, y: bottomY - radius))
-        path.move(to: NSPoint(x: stemX, y: rect.midY))
+        path.move(to: NSPoint(x: stemX, y: forkY))
         path.curve(
             to: NSPoint(x: branchX - radius, y: branchY),
-            controlPoint1: NSPoint(x: stemX + iconRect.width * 0.16, y: rect.midY),
-            controlPoint2: NSPoint(x: branchX - iconRect.width * 0.16, y: branchY)
+            controlPoint1: NSPoint(x: stemX + iconRect.width * 0.08, y: forkY),
+            controlPoint2: NSPoint(x: branchX - iconRect.width * 0.20, y: branchY)
         )
-        path.lineWidth = max(1.1, rect.width * 0.16)
+        path.lineWidth = strokeWidth
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         path.stroke()
