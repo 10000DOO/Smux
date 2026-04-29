@@ -17,6 +17,28 @@ final class TerminalOutputStoreTests: XCTestCase {
         XCTAssertEqual(store.output(for: secondSessionID), "second")
     }
 
+    func testAppendPreservesRawPTYBytesForTerminalEmulatorCore() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+        let output = Data([0x1B, 0x5B, 0x33, 0x31, 0x6D, 0x41])
+
+        store.append(output, for: sessionID)
+
+        XCTAssertEqual(store.rawOutputData(for: sessionID), output)
+    }
+
+    func testRawOutputSnapshotTracksTrimmedByteOffset() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore(maximumCharacterCount: 3)
+
+        store.append(Data("abcde".utf8), for: sessionID)
+
+        let snapshot = store.rawOutputSnapshot(for: sessionID)
+        XCTAssertEqual(snapshot.data, Data("cde".utf8))
+        XCTAssertEqual(snapshot.startOffset, 2)
+        XCTAssertEqual(snapshot.endOffset, 5)
+    }
+
     func testAppendPreservesSplitUTF8Scalars() {
         let sessionID = TerminalSession.ID()
         let store = TerminalOutputStore()
@@ -72,6 +94,16 @@ final class TerminalOutputStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.lines.first?.displayWidth, 3)
         XCTAssertEqual(snapshot.lines.first?.cells.map(\.width), [2, 1])
         XCTAssertEqual(snapshot.lines.first?.cells.first?.style.foreground, .ansi(.blue))
+    }
+
+    func testResizeUpdatesTerminalDisplayRowsForAlternateScreen() {
+        let sessionID = TerminalSession.ID()
+        let store = TerminalOutputStore()
+
+        store.resize(sessionID: sessionID, columns: 10, rows: 2)
+        store.append("\u{1B}[?1049h1\n2\n3", for: sessionID)
+
+        XCTAssertEqual(store.output(for: sessionID), "2\n3")
     }
 
     func testAppendPublishesSingleChangePerChunk() {

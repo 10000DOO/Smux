@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import Smux
 
 final class WorkspaceShellTests: XCTestCase {
@@ -457,6 +458,29 @@ final class WorkspaceShellTests: XCTestCase {
         router.createLayoutSession()
 
         XCTAssertEqual(recorder.createLayoutSessionCount, 1)
+    }
+
+    func testLeftRailLayoutMetricsClampAndPreviewResizeWidth() {
+        XCTAssertEqual(
+            LeftRailLayoutMetrics.clampedExpandedWidth(100),
+            LeftRailLayoutMetrics.minimumExpandedWidth
+        )
+        XCTAssertEqual(
+            LeftRailLayoutMetrics.clampedExpandedWidth(500),
+            LeftRailLayoutMetrics.maximumExpandedWidth
+        )
+        XCTAssertEqual(
+            LeftRailLayoutMetrics.width(isCollapsed: true, expandedWidth: 320),
+            LeftRailLayoutMetrics.collapsedWidth
+        )
+        XCTAssertEqual(
+            LeftRailLayoutMetrics.width(isCollapsed: false, expandedWidth: 320),
+            320
+        )
+        XCTAssertEqual(
+            LeftRailLayoutMetrics.resizePreviewWidth(startWidth: 300, translation: 80),
+            380
+        )
     }
 
     @MainActor

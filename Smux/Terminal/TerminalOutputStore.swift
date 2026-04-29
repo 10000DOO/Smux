@@ -16,6 +16,14 @@ final class TerminalOutputStore: ObservableObject {
         buffers[sessionID]?.displayText ?? ""
     }
 
+    func rawOutputData(for sessionID: TerminalSession.ID) -> Data {
+        buffers[sessionID]?.rawData ?? Data()
+    }
+
+    func rawOutputSnapshot(for sessionID: TerminalSession.ID) -> TerminalOutputByteSnapshot {
+        buffers[sessionID]?.rawOutputSnapshot ?? .empty
+    }
+
     func styledOutput(for sessionID: TerminalSession.ID) -> [TerminalStyledTextRun] {
         buffers[sessionID]?.displayRuns ?? []
     }
@@ -34,6 +42,17 @@ final class TerminalOutputStore: ObservableObject {
     func append(_ text: String, for sessionID: TerminalSession.ID) {
         var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
         buffer.append(text)
+        buffers[sessionID] = buffer
+        publishOutputChange()
+    }
+
+    func resize(sessionID: TerminalSession.ID, columns: Int, rows: Int) {
+        guard columns > 0, rows > 0 else {
+            return
+        }
+
+        var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
+        buffer.resize(columns: columns, rows: rows)
         buffers[sessionID] = buffer
         publishOutputChange()
     }

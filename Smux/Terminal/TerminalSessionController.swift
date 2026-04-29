@@ -7,6 +7,7 @@ typealias TerminalOutputHandler = @MainActor (TerminalSession.ID, Data) -> Void
 protocol TerminalCoreControlling: AnyObject {
     func session(for sessionID: TerminalSession.ID) -> TerminalSession?
     func sendInput(_ text: String, to sessionID: TerminalSession.ID)
+    func sendInput(_ data: Data, to sessionID: TerminalSession.ID)
     func resize(sessionID: TerminalSession.ID, columns: Int, rows: Int)
     func terminate(sessionID: TerminalSession.ID)
 }
@@ -31,16 +32,19 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
 
     private let ptyFactory: any PTYClientFactory
     private let outputHandler: TerminalOutputHandler?
+    private let environment: () -> [String: String]
     private let clock: () -> Date
     private var ptyClients: [TerminalSession.ID: any PTYClient] = [:]
 
     init(
         ptyFactory: any PTYClientFactory = LocalPTYClientFactory(),
         outputHandler: TerminalOutputHandler? = nil,
+        environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment },
         clock: @escaping () -> Date = Date.init
     ) {
         self.ptyFactory = ptyFactory
         self.outputHandler = outputHandler
+        self.environment = environment
         self.clock = clock
     }
 
@@ -102,6 +106,14 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
 
     func sendInput(_ text: String, to sessionID: TerminalSession.ID) {
         guard let data = text.data(using: .utf8), !data.isEmpty else {
+            return
+        }
+
+        sendInput(data, to: sessionID)
+    }
+
+    func sendInput(_ data: Data, to sessionID: TerminalSession.ID) {
+        guard !data.isEmpty else {
             return
         }
 
@@ -216,17 +228,17 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         command: [String],
         workingDirectory: URL
     ) throws -> TerminalLaunch {
-        let environment = Self.terminalEnvironment(from: ProcessInfo.processInfo.environment)
+        let launchEnvironment = Self.normalizedTerminalEnvironment(from: environment())
 
         if command.isEmpty {
-            let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            let shellPath = launchEnvironment["SHELL"] ?? "/bin/zsh"
             let executableURL = URL(fileURLWithPath: shellPath)
             let arguments = Self.loginShellArguments(for: executableURL)
             let request = PTYLaunchRequest(
                 executableURL: executableURL,
                 arguments: arguments,
                 workingDirectory: workingDirectory,
-                environment: environment,
+                environment: launchEnvironment,
                 columns: 80,
                 rows: 24
             )
@@ -256,7 +268,7 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
             executableURL: executableURL,
             arguments: arguments,
             workingDirectory: workingDirectory,
-            environment: environment,
+            environment: launchEnvironment,
             columns: 80,
             rows: 24
         )
@@ -278,15 +290,6 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         default:
             return []
         }
-    }
-
-    private static func terminalEnvironment(from environment: [String: String]) -> [String: String] {
-        var terminalEnvironment = environment
-        if terminalEnvironment["TERM"].map({ $0.isEmpty || $0 == "dumb" }) ?? true {
-            terminalEnvironment["TERM"] = "xterm-256color"
-        }
-        terminalEnvironment["TERM_PROGRAM"] = "Smux"
-        return terminalEnvironment
     }
 
     private func receiveOutput(_ data: Data, for sessionID: TerminalSession.ID) {
@@ -356,6 +359,25 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         restoredSession.processID = nil
         restoredSession.failureMessage = "Terminal process is not restored with workspace snapshots."
         return restoredSession
+    }
+
+    private static func normalizedTerminalEnvironment(from environment: [String: String]) -> [String: String] {
+        var normalizedEnvironment = environment
+        let terminalType = normalizedEnvironment["TERM"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if terminalType == nil || terminalType?.isEmpty == true || terminalType == "dumb" {
+            normalizedEnvironment["TERM"] = "xterm-256color"
+        }
+
+        if normalizedEnvironment["COLORTERM"]?.isEmpty ?? true {
+            normalizedEnvironment["COLORTERM"] = "truecolor"
+        }
+
+        if normalizedEnvironment["TERM_PROGRAM"]?.isEmpty ?? true {
+            normalizedEnvironment["TERM_PROGRAM"] = "Smux"
+        }
+
+        return normalizedEnvironment
     }
 }
 

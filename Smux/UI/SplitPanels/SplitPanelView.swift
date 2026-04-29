@@ -377,22 +377,13 @@ private struct TerminalPanelSurfaceView: View {
                 onCreateTerminal: onCreateTerminal
             )
 
-            GeometryReader { proxy in
-                TerminalViewRepresentable(
-                    snapshot: terminalOutputStore.gridSnapshot(for: sessionID),
-                    appearance: terminalPreferencesStore.appearance,
-                    onInput: viewModel.sendInput
-                )
-                .onAppear {
-                    resizeTerminal(to: proxy.size)
-                }
-                .onChange(of: proxy.size) { _, newSize in
-                    resizeTerminal(to: newSize)
-                }
-                .onChange(of: terminalPreferencesStore.fontSize) {
-                    resizeTerminal(to: proxy.size)
-                }
-            }
+            SwiftTermTerminalViewRepresentable(
+                outputSnapshot: terminalOutputStore.rawOutputSnapshot(for: sessionID),
+                appearance: terminalPreferencesStore.appearance,
+                onInput: viewModel.sendInput,
+                onResize: resizeTerminal(columns:rows:)
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear {
@@ -422,16 +413,14 @@ private struct TerminalPanelSurfaceView: View {
         }
     }
 
-    private func resizeTerminal(to size: CGSize) {
-        let gridSize = TerminalGridSizeEstimator.estimate(
-            size: size,
-            fontSize: terminalPreferencesStore.fontSize
-        )
+    private func resizeTerminal(columns: Int, rows: Int) {
+        let gridSize = TerminalGridSizeEstimator(columns: columns, rows: rows)
         guard lastResizedGridSize != gridSize else {
             return
         }
 
         lastResizedGridSize = gridSize
+        terminalOutputStore.resize(sessionID: sessionID, columns: gridSize.columns, rows: gridSize.rows)
         viewModel.resize(columns: gridSize.columns, rows: gridSize.rows)
     }
 }

@@ -38,6 +38,15 @@ final class TerminalViewModel: ObservableObject {
         refreshSession()
     }
 
+    func sendInput(_ data: Data) {
+        guard let sessionID = session?.id else {
+            return
+        }
+
+        terminalCore?.sendInput(data, to: sessionID)
+        refreshSession()
+    }
+
     func resize(columns: Int, rows: Int) {
         guard let sessionID = session?.id else {
             return

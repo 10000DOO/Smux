@@ -510,6 +510,11 @@ private final class MockTerminalCore: TerminalCoreControlling {
         sentInputs.append((text: text, sessionID: sessionID))
     }
 
+    func sendInput(_ data: Data, to sessionID: TerminalSession.ID) {
+        let text = String(data: data, encoding: .utf8) ?? ""
+        sentInputs.append((text: text, sessionID: sessionID))
+    }
+
     func resize(sessionID: TerminalSession.ID, columns: Int, rows: Int) {
         resizes.append((sessionID: sessionID, columns: columns, rows: rows))
     }

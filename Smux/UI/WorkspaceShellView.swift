@@ -20,8 +20,9 @@ struct WorkspaceShellView: View {
     var commandRouter: AppCommandRouter
     var onOpenWorkspace: () -> Void = {}
     @State private var isLeftRailCollapsed = false
-    @State private var leftRailWidth = WorkspaceShellMetrics.defaultLeftRailWidth
-    @State private var leftRailDragStartWidth: CGFloat?
+    @State private var leftRailWidth = LeftRailLayoutMetrics.defaultExpandedWidth
+    @State private var leftRailResizeStartWidth: CGFloat?
+    @State private var leftRailPreviewWidth: CGFloat?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -41,18 +42,19 @@ struct WorkspaceShellView: View {
                 onSelectSession: selectSession,
                 onCloseSession: closeSession,
                 onOpenWorkspace: onOpenWorkspace,
-                onToggleCollapsed: {
-                    isLeftRailCollapsed.toggle()
-                },
+                onToggleCollapsed: toggleLeftRailCollapsed,
                 onSelectWorkspace: selectWorkspace,
                 onCloseWorkspace: closeWorkspace,
                 onOpenRecentWorkspace: openRecentWorkspace,
                 onSelectNotification: activateNotification,
                 onAcknowledgeNotification: acknowledgeNotification
             )
-            .frame(width: isLeftRailCollapsed ? WorkspaceShellMetrics.collapsedLeftRailWidth : leftRailWidth)
+            .frame(width: currentLeftRailWidth)
 
-            WorkspaceShellResizeHandle(isActive: !isLeftRailCollapsed)
+            WorkspaceShellResizeHandle(
+                isActive: !isLeftRailCollapsed,
+                isResizing: leftRailPreviewWidth != nil
+            )
                 .gesture(leftRailResizeGesture)
 
             SplitPanelView(
@@ -85,6 +87,9 @@ struct WorkspaceShellView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, minHeight: 560)
+        .overlay(alignment: .leading) {
+            leftRailResizePreviewGuide
+        }
         .overlay(alignment: .topLeading) {
             WorkspaceCommandShortcutLayer(
                 commandRouter: commandRouter,
@@ -123,6 +128,29 @@ struct WorkspaceShellView: View {
         }
     }
 
+    private var currentLeftRailWidth: CGFloat {
+        LeftRailLayoutMetrics.width(isCollapsed: isLeftRailCollapsed, expandedWidth: leftRailWidth)
+    }
+
+    @ViewBuilder
+    private var leftRailResizePreviewGuide: some View {
+        if let leftRailPreviewWidth, !isLeftRailCollapsed {
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.55))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .shadow(color: Color.accentColor.opacity(0.22), radius: 4, x: 0, y: 0)
+                .offset(x: leftRailPreviewWidth)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func toggleLeftRailCollapsed() {
+        leftRailPreviewWidth = nil
+        leftRailResizeStartWidth = nil
+        isLeftRailCollapsed.toggle()
+    }
+
     private var leftRailResizeGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -130,42 +158,40 @@ struct WorkspaceShellView: View {
                     return
                 }
 
-                if leftRailDragStartWidth == nil {
-                    leftRailDragStartWidth = leftRailWidth
+                if leftRailResizeStartWidth == nil {
+                    leftRailResizeStartWidth = leftRailWidth
                 }
 
-                let proposedWidth = (leftRailDragStartWidth ?? leftRailWidth) + value.translation.width
-                leftRailWidth = WorkspaceShellMetrics.clampedLeftRailWidth(proposedWidth)
+                leftRailPreviewWidth = LeftRailLayoutMetrics.resizePreviewWidth(
+                    startWidth: leftRailResizeStartWidth ?? leftRailWidth,
+                    translation: value.translation.width
+                )
             }
             .onEnded { _ in
-                leftRailDragStartWidth = nil
+                if let leftRailPreviewWidth {
+                    leftRailWidth = leftRailPreviewWidth
+                }
+
+                leftRailPreviewWidth = nil
+                leftRailResizeStartWidth = nil
             }
-    }
-}
-
-private enum WorkspaceShellMetrics {
-    static let collapsedLeftRailWidth: CGFloat = 54
-    static let defaultLeftRailWidth: CGFloat = 300
-    static let minimumLeftRailWidth: CGFloat = 220
-    static let maximumLeftRailWidth: CGFloat = 420
-
-    static func clampedLeftRailWidth(_ width: CGFloat) -> CGFloat {
-        min(max(width, minimumLeftRailWidth), maximumLeftRailWidth)
     }
 }
 
 private struct WorkspaceShellResizeHandle: View {
     var isActive: Bool
+    var isResizing: Bool
     @State private var isHovering = false
+    @State private var didPushResizeCursor = false
 
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(isHovering && isActive ? 0.22 : 0.08))
+                .fill(Color(nsColor: .separatorColor).opacity(isEmphasized ? 0.24 : 0.08))
                 .frame(width: 1)
 
             Capsule()
-                .fill(Color.secondary.opacity(isHovering && isActive ? 0.35 : 0))
+                .fill(Color.secondary.opacity(isEmphasized ? 0.35 : 0))
                 .frame(width: 3, height: 48)
         }
         .frame(width: isActive ? 9 : 1)
@@ -173,18 +199,42 @@ private struct WorkspaceShellResizeHandle: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovering = hovering
+
             guard isActive else {
+                popResizeCursorIfNeeded()
                 return
             }
 
-            if hovering {
+            if hovering, !didPushResizeCursor {
                 NSCursor.resizeLeftRight.push()
-            } else {
-                NSCursor.pop()
+                didPushResizeCursor = true
+            } else if !hovering {
+                popResizeCursorIfNeeded()
             }
+        }
+        .onChange(of: isActive) { _, isActive in
+            if !isActive {
+                popResizeCursorIfNeeded()
+            }
+        }
+        .onDisappear {
+            popResizeCursorIfNeeded()
         }
         .accessibilityLabel("Resize sidebar")
         .accessibilityHint("Drag to resize the session sidebar")
+    }
+
+    private var isEmphasized: Bool {
+        (isHovering || isResizing) && isActive
+    }
+
+    private func popResizeCursorIfNeeded() {
+        guard didPushResizeCursor else {
+            return
+        }
+
+        NSCursor.pop()
+        didPushResizeCursor = false
     }
 }
 

@@ -197,6 +197,68 @@ final class TerminalDisplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.text, "ready")
     }
 
+    func testDECSpecialGraphicsMapsLineDrawingCharacters() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("\u{1B}(0lqk\u{1B}(B")
+
+        XCTAssertEqual(buffer.text, "┌─┐")
+    }
+
+    func testShiftOutUsesG1SpecialGraphicsWithoutLeakingDesignatorBytes() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("\u{1B})0\u{0E}xq\u{0F}x")
+
+        XCTAssertEqual(buffer.text, "│─x")
+    }
+
+    func testStringControlSequencesAreIgnoredUntilTerminator() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("a\u{1B}Pignored payload\u{1B}\\b")
+
+        XCTAssertEqual(buffer.text, "ab")
+    }
+
+    func testSaveAndRestoreCursorSupportsTUIRepaints() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("abc\u{1B}7XYZ\u{1B}8!\u{1B}[K")
+
+        XCTAssertEqual(buffer.text, "abc!")
+    }
+
+    func testAlternateScreenScrollsWithinConfiguredRows() {
+        var buffer = TerminalDisplayBuffer(columns: 10, rows: 2)
+
+        buffer.append("\u{1B}[?1049h1\n2\n3")
+
+        XCTAssertEqual(buffer.text, "2\n3")
+    }
+
+    func testExtendedTrueColorSGRCreatesRGBStyle() {
+        var buffer = TerminalDisplayBuffer()
+
+        buffer.append("\u{1B}[38;2;12;34;56mR\u{1B}[0m")
+
+        XCTAssertEqual(
+            buffer.styledRuns,
+            [
+                TerminalStyledTextRun(
+                    text: "R",
+                    style: TerminalTextStyle(
+                        foreground: .rgb(red: 12, green: 34, blue: 56),
+                        background: nil,
+                        isBold: false,
+                        isItalic: false,
+                        isUnderline: false
+                    )
+                )
+            ]
+        )
+    }
+
     func testUTF8TextIsPreserved() {
         var buffer = TerminalDisplayBuffer()
 

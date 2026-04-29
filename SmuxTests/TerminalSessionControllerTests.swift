@@ -59,6 +59,53 @@ final class TerminalSessionControllerTests: XCTestCase {
         XCTAssertEqual(session.status, .running)
     }
 
+    func testCreateSessionNormalizesDumbTerminalEnvironmentForInteractiveTools() async throws {
+        let client = MockPTYClient(processID: 2468)
+        let controller = TerminalSessionController(
+            ptyFactory: MockPTYClientFactory(client: client),
+            environment: {
+                [
+                    "SHELL": "/bin/zsh",
+                    "PATH": "/usr/bin:/bin",
+                    "TERM": "dumb"
+                ]
+            }
+        )
+        let workspace = makeWorkspace(path: "/tmp/SmuxTerminalEnvironment")
+
+        _ = try await controller.createSession(in: workspace, command: [])
+
+        let launchEnvironment = try XCTUnwrap(client.startRequests.first?.environment)
+        XCTAssertEqual(launchEnvironment["SHELL"], "/bin/zsh")
+        XCTAssertEqual(launchEnvironment["PATH"], "/usr/bin:/bin")
+        XCTAssertEqual(launchEnvironment["TERM"], "xterm-256color")
+        XCTAssertEqual(launchEnvironment["COLORTERM"], "truecolor")
+        XCTAssertEqual(launchEnvironment["TERM_PROGRAM"], "Smux")
+    }
+
+    func testCreateSessionPreservesCapableTerminalEnvironment() async throws {
+        let client = MockPTYClient(processID: 1357)
+        let controller = TerminalSessionController(
+            ptyFactory: MockPTYClientFactory(client: client),
+            environment: {
+                [
+                    "SHELL": "/bin/zsh",
+                    "TERM": "screen-256color",
+                    "COLORTERM": "24bit",
+                    "TERM_PROGRAM": "CustomTerminal"
+                ]
+            }
+        )
+        let workspace = makeWorkspace(path: "/tmp/SmuxTerminalEnvironmentPreserve")
+
+        _ = try await controller.createSession(in: workspace, command: ["codex"])
+
+        let launchEnvironment = try XCTUnwrap(client.startRequests.first?.environment)
+        XCTAssertEqual(launchEnvironment["TERM"], "screen-256color")
+        XCTAssertEqual(launchEnvironment["COLORTERM"], "24bit")
+        XCTAssertEqual(launchEnvironment["TERM_PROGRAM"], "CustomTerminal")
+    }
+
     func testCreateSessionStoresFailedSessionWhenPTYStartFails() async {
         let client = MockPTYClient(startError: MockPTYError.startFailed)
         let controller = TerminalSessionController(

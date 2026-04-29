@@ -61,6 +61,8 @@ private struct LeftRailFileTreeRow: View {
     var onExpand: (FileTreeNode.ID) -> Void
     var onSelect: (FileTreeNode.ID) -> Void
 
+    @State private var isHovered = false
+
     private var presentation: LeftRailFileTreeNodePresentation {
         LeftRailFileTreeNodePresentation(node: node)
     }
@@ -85,24 +87,31 @@ private struct LeftRailFileTreeRow: View {
                         Text(node.name)
                             .lineLimit(1)
                             .foregroundStyle(isSelected ? .primary : .secondary)
+
+                        Spacer(minLength: 6)
+
+                        if let childrenStatusText = presentation.childrenStatusText {
+                            Text(childrenStatusText)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-
-                if let childrenStatusText = presentation.childrenStatusText {
-                    Text(childrenStatusText)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
             }
             .font(.caption)
             .padding(.vertical, 2)
             .padding(.horizontal, 4)
             .padding(.leading, CGFloat(depth) * 14)
-            .background(selectionBackground)
+            .background(LeftRailRowBackground(isActive: isSelected, isHovered: isHovered))
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(RoundedRectangle(cornerRadius: 5))
+            .onHover { hovering in
+                isHovered = hovering
+            }
 
             ForEach(loadedChildren) { child in
                 LeftRailFileTreeRow(
@@ -161,11 +170,4 @@ private struct LeftRailFileTreeRow: View {
         }
     }
 
-    @ViewBuilder
-    private var selectionBackground: some View {
-        if isSelected {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(Color.accentColor.opacity(0.14))
-        }
-    }
 }

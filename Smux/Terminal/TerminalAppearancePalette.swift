@@ -28,12 +28,65 @@ struct TerminalAppearancePalette {
         }
     }
 
-    func color(for color: TerminalTextColor?) -> NSColor? {
-        guard case let .ansi(ansiColor) = color else {
+    func color(for textColor: TerminalTextColor?) -> NSColor? {
+        guard let textColor else {
             return nil
         }
 
-        return ansi[ansiColor]
+        switch textColor {
+        case let .ansi(ansiColor):
+            return ansi[ansiColor]
+        case let .indexed(index):
+            return colorFor256ColorIndex(index)
+        case let .rgb(red, green, blue):
+            return NSColor(
+                calibratedRed: CGFloat(min(max(red, 0), 255)) / 255,
+                green: CGFloat(min(max(green, 0), 255)) / 255,
+                blue: CGFloat(min(max(blue, 0), 255)) / 255,
+                alpha: 1
+            )
+        }
+    }
+
+    var ansiColorsInTerminalOrder: [NSColor] {
+        (0...15).map { rawValue in
+            guard let ansiColor = TerminalANSIColor(rawValue: rawValue) else {
+                return foreground
+            }
+
+            return ansi[ansiColor] ?? foreground
+        }
+    }
+
+    private func colorFor256ColorIndex(_ index: Int) -> NSColor? {
+        switch index {
+        case 0...15:
+            guard let ansiColor = TerminalANSIColor(rawValue: index) else {
+                return nil
+            }
+
+            return ansi[ansiColor]
+        case 16...231:
+            let colorIndex = index - 16
+            let red = colorIndex / 36
+            let green = (colorIndex % 36) / 6
+            let blue = colorIndex % 6
+            return NSColor(
+                calibratedRed: colorCubeComponent(red),
+                green: colorCubeComponent(green),
+                blue: colorCubeComponent(blue),
+                alpha: 1
+            )
+        case 232...255:
+            let component = CGFloat(8 + (index - 232) * 10) / 255
+            return NSColor(calibratedWhite: component, alpha: 1)
+        default:
+            return nil
+        }
+    }
+
+    private func colorCubeComponent(_ component: Int) -> CGFloat {
+        component == 0 ? 0 : CGFloat(55 + component * 40) / 255
     }
 
     private static let darkReadableBlack = NSColor(calibratedWhite: 0.22, alpha: 1)

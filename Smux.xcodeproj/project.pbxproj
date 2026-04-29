@@ -7,7 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A1F0C0012F9B710000000001 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = A1F0C0022F9B710000000001 /* Fixtures */; };
+		A1F0C0012F9B710000000001 /* SmuxTests/Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = A1F0C0022F9B710000000001 /* SmuxTests/Fixtures */; };
+		A2D0F0012FA0A10000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = A2D0F0022FA0A10000000001 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -31,7 +32,7 @@
 		6917D3CC2F9B701000F7A6AE /* Smux.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Smux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6917D3D92F9B701100F7A6AE /* SmuxTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmuxTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6917D3E32F9B701100F7A6AE /* SmuxUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A1F0C0022F9B710000000001 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SmuxTests/Fixtures; sourceTree = SOURCE_ROOT; };
+		A1F0C0022F9B710000000001 /* SmuxTests/Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = SmuxTests/Fixtures; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -57,6 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2D0F0012FA0A10000000001 /* SwiftTerm in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +86,7 @@
 				6917D3DC2F9B701100F7A6AE /* SmuxTests */,
 				6917D3E62F9B701100F7A6AE /* SmuxUITests */,
 				6917D3CD2F9B701000F7A6AE /* Products */,
+				69CBE29A2F9DDE35008D22F0 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -95,6 +98,14 @@
 				6917D3E32F9B701100F7A6AE /* SmuxUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		69CBE29A2F9DDE35008D22F0 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				A1F0C0022F9B710000000001 /* SmuxTests/Fixtures */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -117,6 +128,7 @@
 			);
 			name = Smux;
 			packageProductDependencies = (
+				A2D0F0022FA0A10000000001 /* SwiftTerm */,
 			);
 			productName = Smux;
 			productReference = 6917D3CC2F9B701000F7A6AE /* Smux.app */;
@@ -200,6 +212,9 @@
 			);
 			mainGroup = 6917D3C32F9B701000F7A6AE;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A2D0F0032FA0A10000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6917D3CD2F9B701000F7A6AE /* Products */;
 			projectDirPath = "";
@@ -224,7 +239,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1F0C0012F9B710000000001 /* Fixtures in Resources */,
+				A1F0C0012F9B710000000001 /* SmuxTests/Fixtures in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -577,6 +592,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A2D0F0032FA0A10000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A2D0F0022FA0A10000000001 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A2D0F0032FA0A10000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 6917D3C42F9B701000F7A6AE /* Project object */;
 }
