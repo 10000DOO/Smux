@@ -1827,6 +1827,44 @@ final class WorkspacePanelFoundationTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceCoordinatorCreateTerminalPreservesLeftRailWorkspaceState() async throws {
+        let activeWorkspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/LeftRailActiveTerminalWorkspace")
+        )
+        let secondaryWorkspace = Workspace.make(
+            id: UUID(),
+            rootURL: URL(fileURLWithPath: "/tmp/LeftRailSecondaryTerminalWorkspace")
+        )
+        let workspaceStore = WorkspaceStore(
+            activeWorkspace: activeWorkspace,
+            workspaces: [activeWorkspace, secondaryWorkspace]
+        )
+        let panelStore = PanelStore(rootNode: .leaf(surface: .empty))
+        let terminalSessionController = TerminalSessionController(
+            ptyFactory: WorkspacePanelMockPTYClientFactory(client: WorkspacePanelMockPTYClient(processID: 5432))
+        )
+        let workspaceSessionStore = WorkspaceSessionStore()
+        let workspaceLayoutSessionStore = WorkspaceLayoutSessionStore()
+        let coordinator = WorkspaceCoordinator(
+            workspaceStore: workspaceStore,
+            panelStore: panelStore,
+            terminalSessionController: terminalSessionController,
+            workspaceSessionStore: workspaceSessionStore,
+            workspaceLayoutSessionStore: workspaceLayoutSessionStore
+        )
+        _ = workspaceLayoutSessionStore.ensureActiveSession(in: activeWorkspace.id)
+
+        try await coordinator.createTerminal(in: activeWorkspace.id)
+
+        XCTAssertEqual(workspaceStore.activeWorkspace?.id, activeWorkspace.id)
+        XCTAssertEqual(workspaceStore.workspaces.map(\.id), [activeWorkspace.id, secondaryWorkspace.id])
+        XCTAssertEqual(workspaceLayoutSessionStore.sessions(in: activeWorkspace.id).count, 1)
+        XCTAssertEqual(workspaceSessionStore.sessions(in: activeWorkspace.id).count, 1)
+        XCTAssertEqual(panelStore.rootNode.workspaceSessionIDs.count, 1)
+    }
+
+    @MainActor
     func testWorkspaceCoordinatorCreateLayoutSessionDoesNotCreateContentSession() {
         let workspace = Workspace.make(
             id: UUID(),

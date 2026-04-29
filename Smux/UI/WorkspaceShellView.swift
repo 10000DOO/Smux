@@ -50,6 +50,7 @@ struct WorkspaceShellView: View {
                 onAcknowledgeNotification: acknowledgeNotification
             )
             .frame(width: currentLeftRailWidth)
+            .layoutPriority(1)
 
             WorkspaceShellResizeHandle(
                 isActive: !isLeftRailCollapsed,
@@ -85,6 +86,7 @@ struct WorkspaceShellView: View {
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
         }
         .frame(minWidth: 900, minHeight: 560)
         .overlay(alignment: .leading) {
