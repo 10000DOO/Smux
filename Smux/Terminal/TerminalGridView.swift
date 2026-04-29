@@ -507,6 +507,113 @@ final class TerminalGridView: NSView, NSTextFinderClient, NSTextInputClient {
     }
 }
 
+enum TerminalPowerlineSymbol: Character {
+    case branch = "\u{E0A0}"
+    case rightSeparator = "\u{E0B0}"
+    case rightThinSeparator = "\u{E0B1}"
+    case leftSeparator = "\u{E0B2}"
+    case leftThinSeparator = "\u{E0B3}"
+
+    init?(text: String) {
+        guard text.count == 1, let character = text.first else {
+            return nil
+        }
+
+        self.init(rawValue: character)
+    }
+
+    func draw(in rect: NSRect, foregroundColor: NSColor) {
+        foregroundColor.set()
+
+        switch self {
+        case .branch:
+            drawBranch(in: rect)
+        case .rightSeparator:
+            drawRightSeparator(in: rect)
+        case .rightThinSeparator:
+            drawRightThinSeparator(in: rect)
+        case .leftSeparator:
+            drawLeftSeparator(in: rect)
+        case .leftThinSeparator:
+            drawLeftThinSeparator(in: rect)
+        }
+    }
+
+    private func drawRightSeparator(in rect: NSRect) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.midY))
+        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        path.close()
+        path.fill()
+    }
+
+    private func drawRightThinSeparator(in rect: NSRect) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.midY))
+        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    private func drawLeftSeparator(in rect: NSRect) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.maxX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.minX, y: rect.midY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+        path.close()
+        path.fill()
+    }
+
+    private func drawLeftThinSeparator(in rect: NSRect) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: rect.maxX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.minX, y: rect.midY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    private func drawBranch(in rect: NSRect) {
+        let iconRect = rect.insetBy(dx: rect.width * 0.18, dy: rect.height * 0.18)
+        let radius = max(1, min(iconRect.width, iconRect.height) * 0.12)
+        let stemX = iconRect.minX + iconRect.width * 0.35
+        let topY = iconRect.minY + iconRect.height * 0.25
+        let bottomY = iconRect.minY + iconRect.height * 0.75
+        let branchX = iconRect.minX + iconRect.width * 0.72
+        let branchY = iconRect.minY + iconRect.height * 0.42
+
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: stemX, y: topY + radius))
+        path.line(to: NSPoint(x: stemX, y: bottomY - radius))
+        path.move(to: NSPoint(x: stemX, y: rect.midY))
+        path.curve(
+            to: NSPoint(x: branchX - radius, y: branchY),
+            controlPoint1: NSPoint(x: stemX + iconRect.width * 0.16, y: rect.midY),
+            controlPoint2: NSPoint(x: branchX - iconRect.width * 0.16, y: branchY)
+        )
+        path.lineWidth = max(1.1, rect.width * 0.16)
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
+
+        drawCircle(center: NSPoint(x: stemX, y: topY), radius: radius)
+        drawCircle(center: NSPoint(x: stemX, y: bottomY), radius: radius)
+        drawCircle(center: NSPoint(x: branchX, y: branchY), radius: radius)
+    }
+
+    private func drawCircle(center: NSPoint, radius: CGFloat) {
+        let rect = NSRect(
+            x: center.x - radius,
+            y: center.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        )
+        NSBezierPath(ovalIn: rect).fill()
+    }
+}
+
 enum TerminalCellRenderer {
     static func draw(
         snapshot: TerminalGridSnapshot,
@@ -631,9 +738,16 @@ enum TerminalCellRenderer {
         paragraphStyle.maximumLineHeight = rowHeight
         paragraphStyle.lineBreakMode = .byClipping
 
+        let foregroundColor = isSelected ? NSColor.selectedTextColor : typography.foregroundColor(for: cell.style)
+
+        if let symbol = TerminalPowerlineSymbol(text: cell.text) {
+            symbol.draw(in: rect, foregroundColor: foregroundColor)
+            return
+        }
+
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: isSelected ? NSColor.selectedTextColor : typography.foregroundColor(for: cell.style),
+            .foregroundColor: foregroundColor,
             .paragraphStyle: paragraphStyle,
             .ligature: 0,
             .kern: 0

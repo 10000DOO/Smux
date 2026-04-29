@@ -216,20 +216,23 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
         command: [String],
         workingDirectory: URL
     ) throws -> TerminalLaunch {
+        let environment = Self.terminalEnvironment(from: ProcessInfo.processInfo.environment)
+
         if command.isEmpty {
             let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
             let executableURL = URL(fileURLWithPath: shellPath)
+            let arguments = Self.loginShellArguments(for: executableURL)
             let request = PTYLaunchRequest(
                 executableURL: executableURL,
-                arguments: [],
+                arguments: arguments,
                 workingDirectory: workingDirectory,
-                environment: ProcessInfo.processInfo.environment,
+                environment: environment,
                 columns: 80,
                 rows: 24
             )
             return TerminalLaunch(
                 request: request,
-                command: [shellPath],
+                command: [shellPath] + arguments,
                 shell: shellPath,
                 title: executableURL.lastPathComponent
             )
@@ -253,7 +256,7 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
             executableURL: executableURL,
             arguments: arguments,
             workingDirectory: workingDirectory,
-            environment: ProcessInfo.processInfo.environment,
+            environment: environment,
             columns: 80,
             rows: 24
         )
@@ -264,6 +267,26 @@ final class TerminalSessionController: ObservableObject, TerminalCoreControlling
             shell: nil,
             title: command.joined(separator: " ")
         )
+    }
+
+    private static func loginShellArguments(for executableURL: URL) -> [String] {
+        switch executableURL.lastPathComponent {
+        case "bash", "dash", "ksh", "sh", "zsh":
+            return ["-l"]
+        case "fish":
+            return ["--login"]
+        default:
+            return []
+        }
+    }
+
+    private static func terminalEnvironment(from environment: [String: String]) -> [String: String] {
+        var terminalEnvironment = environment
+        if terminalEnvironment["TERM"].map({ $0.isEmpty || $0 == "dumb" }) ?? true {
+            terminalEnvironment["TERM"] = "xterm-256color"
+        }
+        terminalEnvironment["TERM_PROGRAM"] = "Smux"
+        return terminalEnvironment
     }
 
     private func receiveOutput(_ data: Data, for sessionID: TerminalSession.ID) {

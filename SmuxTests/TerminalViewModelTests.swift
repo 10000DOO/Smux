@@ -312,6 +312,16 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertLessThan(lightWhite.red, 0.8)
     }
 
+    func testTerminalPaletteKeepsAgnosterPromptSegmentsReadableInDarkTheme() throws {
+        let palette = TerminalAppearancePalette.palette(for: .dark)
+        let defaultForeground = try colorComponents(from: palette.foreground)
+        let black = try colorComponents(from: XCTUnwrap(palette.color(for: .ansi(.black))))
+        let blue = try colorComponents(from: XCTUnwrap(palette.color(for: .ansi(.blue))))
+
+        XCTAssertGreaterThanOrEqual(contrastRatio(defaultForeground, black), 7)
+        XCTAssertGreaterThanOrEqual(contrastRatio(black, blue), 4.5)
+    }
+
     func testTerminalGridSnapshotBuildsStyledCellsAndWideWidths() {
         let redStyle = TerminalTextStyle(foreground: .ansi(.red), isBold: true)
         let snapshot = TerminalGridSnapshot(
@@ -353,6 +363,16 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertGreaterThan(smallTypography.cellSize.height, 0)
         XCTAssertGreaterThan(largeTypography.cellSize.width, smallTypography.cellSize.width)
         XCTAssertEqual(smallTypography.textInsets, TerminalTypography.defaultTextInsets)
+    }
+
+    func testTerminalPowerlineSymbolRecognizesAgnosterGlyphs() {
+        XCTAssertEqual(TerminalPowerlineSymbol(text: "\u{E0A0}"), .branch)
+        XCTAssertEqual(TerminalPowerlineSymbol(text: "\u{E0B0}"), .rightSeparator)
+        XCTAssertEqual(TerminalPowerlineSymbol(text: "\u{E0B1}"), .rightThinSeparator)
+        XCTAssertEqual(TerminalPowerlineSymbol(text: "\u{E0B2}"), .leftSeparator)
+        XCTAssertEqual(TerminalPowerlineSymbol(text: "\u{E0B3}"), .leftThinSeparator)
+        XCTAssertNil(TerminalPowerlineSymbol(text: "A"))
+        XCTAssertNil(TerminalPowerlineSymbol(text: "\u{E0B0}\u{E0A0}"))
     }
 
     func testTerminalGridSizeEstimatorClampsAndUsesInsets() {
@@ -446,8 +466,33 @@ final class TerminalViewModelTests: XCTestCase {
         attribute: NSAttributedString.Key
     ) throws -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
         let color = try XCTUnwrap(attributedText.attribute(attribute, at: 0, effectiveRange: nil) as? NSColor)
+        return try colorComponents(from: color)
+    }
+
+    private func colorComponents(from color: NSColor) throws -> (red: CGFloat, green: CGFloat, blue: CGFloat) {
         let resolvedColor = try XCTUnwrap(color.usingColorSpace(.sRGB))
         return (resolvedColor.redComponent, resolvedColor.greenComponent, resolvedColor.blueComponent)
+    }
+
+    private func contrastRatio(
+        _ lhs: (red: CGFloat, green: CGFloat, blue: CGFloat),
+        _ rhs: (red: CGFloat, green: CGFloat, blue: CGFloat)
+    ) -> CGFloat {
+        let lighter = max(relativeLuminance(lhs), relativeLuminance(rhs))
+        let darker = min(relativeLuminance(lhs), relativeLuminance(rhs))
+        return (lighter + 0.05) / (darker + 0.05)
+    }
+
+    private func relativeLuminance(_ color: (red: CGFloat, green: CGFloat, blue: CGFloat)) -> CGFloat {
+        0.2126 * linearized(color.red) + 0.7152 * linearized(color.green) + 0.0722 * linearized(color.blue)
+    }
+
+    private func linearized(_ component: CGFloat) -> CGFloat {
+        if component <= 0.03928 {
+            return component / 12.92
+        }
+
+        return CGFloat(pow(Double((component + 0.055) / 1.055), 2.4))
     }
 }
 

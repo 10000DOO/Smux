@@ -36,6 +36,9 @@ struct TerminalAppearancePalette {
         return ansi[ansiColor]
     }
 
+    private static let darkReadableBlack = NSColor(calibratedWhite: 0.22, alpha: 1)
+    private static let darkReadableBlue = NSColor(calibratedRed: 0.4, green: 0.7, blue: 1, alpha: 1)
+
     private static let lightANSIColors: [TerminalANSIColor: NSColor] = [
         .black: .black,
         .red: .systemRed,
@@ -56,11 +59,11 @@ struct TerminalAppearancePalette {
     ]
 
     private static let darkANSIColors: [TerminalANSIColor: NSColor] = [
-        .black: NSColor(calibratedWhite: 0.45, alpha: 1),
+        .black: darkReadableBlack,
         .red: .systemRed,
         .green: .systemGreen,
         .yellow: .systemYellow,
-        .blue: .systemBlue,
+        .blue: darkReadableBlue,
         .magenta: .systemPurple,
         .cyan: .systemCyan,
         .white: NSColor(calibratedWhite: 0.9, alpha: 1),
@@ -77,12 +80,15 @@ struct TerminalAppearancePalette {
     private static let systemANSIColors: [TerminalANSIColor: NSColor] = [
         .black: adaptiveColor(
             light: .black,
-            dark: NSColor(calibratedWhite: 0.45, alpha: 1)
+            dark: darkReadableBlack
         ),
         .red: .systemRed,
         .green: .systemGreen,
         .yellow: .systemYellow,
-        .blue: .systemBlue,
+        .blue: adaptiveColor(
+            light: .systemBlue,
+            dark: darkReadableBlue
+        ),
         .magenta: .systemPurple,
         .cyan: .systemCyan,
         .white: adaptiveColor(
