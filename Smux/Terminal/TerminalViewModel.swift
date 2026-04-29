@@ -76,13 +76,23 @@ final class TerminalViewModel: ObservableObject {
               let updatedSession = terminalCore?.session(for: sessionID) else {
             return
         }
+        guard session != updatedSession else {
+            return
+        }
 
         session = updatedSession
     }
 
     private func updateMetadata() {
-        status = session?.status ?? .idle
-        title = session?.title ?? "Terminal"
+        let nextStatus = session?.status ?? .idle
+        if status != nextStatus {
+            status = nextStatus
+        }
+
+        let nextTitle = session?.title ?? "Terminal"
+        if title != nextTitle {
+            title = nextTitle
+        }
     }
 
     private func publishOutput() {

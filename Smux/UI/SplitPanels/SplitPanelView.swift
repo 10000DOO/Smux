@@ -401,7 +401,12 @@ private struct TerminalPanelSurfaceView: View {
     }
 
     private func syncSession() {
-        viewModel.session = session
+        let nextSession = session
+        guard viewModel.session != nextSession else {
+            return
+        }
+
+        viewModel.session = nextSession
     }
 
     private func refreshTerminatedSessionIfNeeded() {

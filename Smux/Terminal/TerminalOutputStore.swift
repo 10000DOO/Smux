@@ -51,8 +51,13 @@ final class TerminalOutputStore: ObservableObject {
             return
         }
 
-        var buffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
+        let currentBuffer = buffers[sessionID] ?? TerminalOutputBuffer(maximumCharacterCount: maximumCharacterCount)
+        var buffer = currentBuffer
         buffer.resize(columns: columns, rows: rows)
+        guard buffer != currentBuffer else {
+            return
+        }
+
         buffers[sessionID] = buffer
         publishOutputChange()
     }
